@@ -72,7 +72,9 @@ target> ./MJPdes ../resources/example.clj
 ```
 
 The input file is a essentially a Clojure map. The syntax of Clojure maps follows
-this pattern: ```clojure {:akey "a value" :another-key {:key3 "a value in an nested map"}}```
+this pattern:
+```clojure {:akey "a value" :another-key {:key3 "a value in an nested map"}}```
+
 Comments in clojure start with a semicolon. 
 
 A annotation of the example file follows:
