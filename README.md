@@ -6,7 +6,7 @@ Multi-job production systems are production systems where jobs of specified job 
 workcenters (machines) of the main line, but the processing time of at each workcenter,
 depending on it job type, may differ.
 
-The terminology used in this document follows that of [1]. 
+The terminology used in this document follows that of reference [1]. 
 
 The program currently enables modeling of asynchronous production lines consisting of machines separated by
 non-zero sized buffers. Machine reliability is exponential (i.e. modeled as a time-continuous Markov chain
@@ -48,7 +48,6 @@ target> ./MJPdes ../resources/example.clj
 
 ```clojure
 {:TP 0.8436111,
- :computed-residence-time 11.287120820692454,
  :wip
  {:b1 2.64061657672258,
   :b2 2.8155548730213145,
