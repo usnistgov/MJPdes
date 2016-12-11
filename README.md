@@ -3,9 +3,10 @@
 A discrete event simulation engine for multi-job production
 
 Multi-job production systems are production systems where jobs of specified job types flow through all
-workcenters of the main line, but the processing time of each job, depending on it job type, may differ.
+workcenters (machines) of the main line, but the processing time of at each workcenter,
+depending on it job type, may differ.
 
-The terminology used in the following follows that of [1]. 
+The terminology used in this document follows that of [1]. 
 
 The program currently enables modeling of asynchronous production lines consisting of machines separated by
 non-zero sized buffers. Machine reliability is exponential (i.e. modeled as a time-continuous Markov chain
@@ -44,11 +45,13 @@ Currently:
  * Buffer size must be > 0.
  * The program only supports exponential machine models.
 
-''''
+```bash
 cd MJPdes/target
 
 target> ./MJPdes ../resources/example.clj
+```
 
+```clojure
 {:TP 0.8436111,
  :computed-residence-time 11.287120820692454,
  :wip
@@ -73,7 +76,7 @@ target> ./MJPdes ../resources/example.clj
   :m3 0.05516286216553973,
   :m4 0.01876798318977487,
   :m5 0.0}}
-''''
+```
 
 The input file is a Clojure map. A description of the  
 
