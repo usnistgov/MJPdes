@@ -38,13 +38,6 @@ The program simply takes a model specification as a file and runs it, printing r
 Depending on the parameters, execution may take a few minutes or more. There is an example input file in the
 resources subdirectory.
 
-## Limitations
-
-Currently:
- * The program only simulates a single line (no subassembly lines).
- * Buffer size must be > 0.
- * The program only supports exponential machine models.
-
 ```bash
 cd MJPdes/target
 
@@ -78,7 +71,54 @@ target> ./MJPdes ../resources/example.clj
   :m5 0.0}}
 ```
 
-The input file is a Clojure map. A description of the  
+The input file is a essentially a Clojure map. The syntax of Clojure maps follows
+this pattern: ```clojure {:akey "a value" :another-key {:key3 "a value in an nested map"}}```
+Comments in clojure start with a semicolon. 
+
+A annotation of the example file follows:
+
+```clojure
+(map->Model  ; a function call to make a Model of the following map argument. 
+ {:line ; a key introducing the line
+  {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine m1
+   :b1 (map->Buffer {:N 3})                        ; the definiton of buffer b1
+   :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
+   :b2 (map->Buffer {:N 5})
+   :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
+   :b3 (map->Buffer {:N 1})
+   :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.05 })
+   :b4 (map->Buffer {:N 1})
+   :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })}
+  :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5] ; the arrangement of the line
+  :entry-point :m1  ; the entry point to the line
+  :params {:warm-up-time 2000 :run-to-time 20000}  ; data is collected from time 2000-20000
+  :jobmix {:jobType1 (map->JobType {:portion 0.8 ; 80% of jobs will be of type jobType1.
+                                    :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
+           :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
+                                    :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})}})```
+
+The ExpoMachine, Buffer and JobType forms need a bit more explanation:
+
+```clojure (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })```
+ * :lambda is the breakdown rate.
+ * :mu is the repair rate.
+ * :W is the work capacity.
+
+```clojure (map->Buffer {:N 3})```
+ * :N is the size of the buffer.
+
+```clojure (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
+                          :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})```
+ * :portion determines the percentage of jobs that processed that will be of this type.
+ * :w introduces a nested map of the work requirements at each machine. e.g. 2.0 units
+   of work at machine :m2.
+
+## Limitations
+
+Currently:
+ * The program only simulates a single line (no subassembly lines).
+ * Buffer size must be > 0.
+ * The program only supports exponential machine models.
 
 
 ## Disclaimer
