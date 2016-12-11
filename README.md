@@ -44,6 +44,8 @@ cd MJPdes/target
 target> ./MJPdes ../resources/example.clj
 ```
 
+### Typical output
+
 ```clojure
 {:TP 0.8436111,
  :computed-residence-time 11.287120820692454,
@@ -73,14 +75,16 @@ target> ./MJPdes ../resources/example.clj
 
 The input file is a essentially a Clojure map. The syntax of Clojure maps follows
 this pattern:
-```clojure {:akey "a value" :another-key {:key3 "a value in an nested map"}}```
+
+```clojure {:akey "a value" :another-key {:key3 "a value in an nested map"}}
+```
 
 Comments in clojure start with a semicolon. 
 
 A annotation of the example file follows:
 
 ```clojure
-(map->Model  ; a function call to make a Model of the following map argument. 
+(map->Model  ; a function call to make a Model of the following map argument
  {:line ; a key introducing the line
   {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine m1
    :b1 (map->Buffer {:N 3})                        ; the definiton of buffer b1
@@ -97,20 +101,24 @@ A annotation of the example file follows:
   :jobmix {:jobType1 (map->JobType {:portion 0.8 ; 80% of jobs will be of type jobType1.
                                     :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
            :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
-                                    :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})}})```
+                                    :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})}})
+```
 
 The ExpoMachine, Buffer and JobType forms need a bit more explanation:
 
-```clojure (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })```
+```clojure (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })
+```
  * :lambda is the breakdown rate.
  * :mu is the repair rate.
  * :W is the work capacity.
 
-```clojure (map->Buffer {:N 3})```
+```clojure (map->Buffer {:N 3})
+```
  * :N is the size of the buffer.
 
 ```clojure (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
-                          :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})```
+                          :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})
+```
  * :portion determines the percentage of jobs that processed that will be of this type.
  * :w introduces a nested map of the work requirements at each machine. e.g. 2.0 units
    of work at machine :m2.
