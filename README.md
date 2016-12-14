@@ -10,7 +10,7 @@ The terminology used in this document follows that of reference [1].
 
 The program currently enables modeling of asynchronous production lines consisting of machines separated by
 non-zero sized buffers. Machine reliability is exponential (i.e. modeled as a continuous-time
-Markov chain with Poisson processes of 'up' and 'down' events.) Machines specify a work capacity. 
+Markov chain with Poisson processes of 'up' and 'down' events). Machines specify a work capacity. 
 Job types describe the amount of work required at each machine. The portion of each job type is specified
 and jobs of those types are sent to the first machine in the line in a random sequence.
 
@@ -79,7 +79,7 @@ this pattern:
 {:akey "a value" :another-key {:key3 "a value in an nested map"}}
 ```
 
-Comments in clojure start with a semicolon. 
+Comments in Clojure start with a semicolon. Commas are treated as whitespace. 
 
 A annotation of the example file follows:
 
