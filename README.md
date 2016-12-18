@@ -3,10 +3,10 @@
 A discrete event simulation engine for multi-job production
 
 Multi-job production systems are production systems where jobs of specified job types flow through all
-workcenters (machines) of the main line, but the processing time of at each workcenter,
-depending on it job type, may differ.
+workcenters (machines) of the main line, but the processing time at each workcenter may differ
+according to the job's job type. 
 
-The terminology used in this document follows that of reference [1]. 
+The terminology used in this mostly document follows that of reference [1]. 
 
 The program currently enables modeling of asynchronous production lines consisting of machines separated by
 non-zero sized buffers. Machine reliability is exponential (i.e. modeled as a continuous-time
@@ -81,7 +81,7 @@ this pattern:
 
 Comments in Clojure start with a semicolon. Commas are treated as whitespace. 
 
-A annotation of the example file follows:
+An annotation of the example file follows:
 
 ```clojure
 (map->Model  ; a function call to make a Model of the following map argument
