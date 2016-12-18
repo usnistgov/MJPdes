@@ -8,8 +8,9 @@
             [lein-cljfmt "0.5.3"]]
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [medley "0.8.3"]
-                 [org.clojure/core.memoize "0.5.8"]
+                 ;[org.clojure/core.memoize "0.5.8"]
                  [incanter/incanter-core "1.9.1"]]
+  :warn-on-reflection true
   :bin {:name "MJPdes"
 ;       :bin-path "~/bin"
         :bootclasspath true}

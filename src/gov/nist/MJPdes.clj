@@ -1,7 +1,6 @@
 (ns gov.nist.MJPdes
   (:require [medley.core :refer (abs)]
-            [incanter.stats :as s]
-            [clojure.core.memoize :as m]
+            [incanter.stats :as s :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
             [clojure.edn :as edn]))
 
@@ -64,62 +63,49 @@
   "Return the name of the buffer that the named machine buffers to.
    (Returns the thing after the argument.)"
   [model m-name]
-  (let [top (:topology model)]
+  (let [^clojure.lang.PersistentVector top (:topology model)]
     (when-let [pos (.indexOf top m-name)]
       (when (< pos (dec (count top)))
         (nth top (inc pos))))))
 
-(m/memo buffers-to)
-
-(defn feeds
-  "Same as buffers-to, but name is meaningful for buffers."
-  [model b-name]
-  (buffers-to model b-name))
-
-(m/memo feeds)
-
 (defn takes-from
   "Return the buffer that the named machine takes work from."
   [model m-name]
-  (let [top (:topology model)]
+  (let [^clojure.lang.PersistentVector top (:topology model)]
     (when-let [pos (.indexOf top m-name)]
       (when (> pos 0)
         (nth top (dec pos))))))
 
-(m/memo takes-from)
-      
-(defmacro up? [m]
-  `(= :down (first (:future ~m))))
+(defn up? [m]
+  (= :down (first (:future m))))
 
-(defmacro down? [m] ; inline
-  `(= :up (first (:future ~m))))
+(defn down? [m]
+  (= :up (first (:future m))))
 
-(defmacro finished? [model m] ; inline
-  `(let [status# (:status ~m)]
-     (or (not status#)
-         (>= (:clock ~model) (:ends status#)))))
+(defn finished? [model m]
+  (let [status (:status m)]
+    (or (not status)
+        (>= (:clock model) (:ends status)))))
 
-(defmacro occupied? [m] ; inline
-  `(:status ~m))
+(defn occupied? [m]
+  (:status m))
 
-(defmacro feed-buffer-empty? [model m] ; inline
+(defn feed-buffer-empty? [model m] 
   "Returns true if buffer feeding machine m is empty." 
-  `(if (= (:name ~m) (:entry-point ~model))
-     false
-     (let [buf# (lookup ~model (takes-from ~model (:name ~m)))]
-       (= (count (:holding buf#)) 0))))
+  (when (not= (:name m) (:entry-point model))
+    (let [buf (lookup model (takes-from model (:name m)))]
+      (= (count (:holding buf)) 0))))
 
-(defmacro buffer-full? [model m] ; inline
+(defn buffer-full? [model m] 
   "Returns true if the buffer that machine m places completed work on is full."
-  `(if-let [buf# (lookup ~model (buffers-to ~model (:name ~m)))] ; last machine cannot be blocked.
-     (= (count (:holding buf#)) (:N buf#))
-     false))
+  (when-let [buf (lookup model (buffers-to model (:name m)))] ; last machine cannot be blocked.
+    (= (count (:holding buf)) (:N buf))))
 
 (defn job-requires
   "Total time that job j requires on a machine m, (w_{ij}/W_i)"
   [model j m]
   (let [W (or (:W m) 1.0)
-        w (get (:w (get (:jobmix model) (:type j))) (:name m))]
+        w (get (:w (get (:jobmix model) (:type j))) (:name m))] ; POD -> 
     (/ w W)))
 
 (defn catch-up-machine!
@@ -210,15 +196,15 @@
 (defn advance2machine
   "Move a job off the buffer onto the machine. Compute time it completes."
   [model m-name]
-;  (when (:status (lookup model m-name)) ; diag
-;    (throw (ex-info "Machine already busy!" {:machine m-name :model model})))
+;;;  (when (:status (lookup model m-name)) ; diag
+;;;    (throw (ex-info "Machine already busy!" {:machine m-name :model model})))
   (let [b-name (takes-from model m-name)
         b (lookup model b-name)
         job (-> (first (:holding b))
                 (assoc :starts (:clock model)))
         [ends future] (job-updates! model job (lookup model m-name))
         job (assoc job :ends ends)]
-;    (when (= :up (first future))
+;;;    (when (= :up (first future))
 ;      (throw (ex-info "Expected an down future!" {:m-name m-name :model model})))
     (log {:act :sm :bf b-name :j (:id job) ;:ends ends
           :n (count (:holding b)) :clk (:clock model)})
@@ -291,66 +277,66 @@
   [model]
   (let [e (lookup model (:entry-point model))]
     (when (not (occupied? e)) ; Doesn't matter if up or down.
-      `((~(:clock model) (add-job ~(new-job model) ~(:entry-point model)))))))
+      [{:time (:clock model) :fn add-job :args (list (new-job model) (:entry-point model))}])))
 
 (defn bring-machine-up?
   "Return an action to bring a down machine up."
   [model]
   (let [bring-up (filter #(down? %) (machines model))]
     (when (not-empty bring-up) ; second of two places time advances.
-      (map (fn [mn] `(~(second (:future mn)) (bring-machine-up ~(:name mn)))) 
-           bring-up))))                                                      
+      (vec (map (fn [mn] {:time (second (:future mn)) :fn bring-machine-up :args (list (:name mn))})
+                bring-up)))))
 
 (defn new-blocked?
   "Return record-actions to list newly blocked machines."
   [model]
   (let [clock (:clock model)
-        old-blocked (:blocked model)
-        new-blocked  (filter #(and 
-                               (buffer-full? model %)
-                               (not (contains? old-blocked (:name %)))
-                               (occupied? %) 
-                               (finished? model %)) 
-                             (machines model))]
-    (when (not-empty new-blocked)
-      (map (fn [mn] `(~clock (new-blocked ~(:name mn)))) new-blocked))))
+        old-block (:blocked model)
+        new-block  (filter #(and 
+                             (buffer-full? model %)
+                             (not (contains? old-block (:name %)))
+                             (occupied? %) 
+                             (finished? model %)) 
+                           (machines model))]
+    (when (not-empty new-block)
+      (vec (map (fn [mn] {:time clock :fn new-blocked :args (list (:name mn))}) new-block)))))
 
 (defn new-unblocked?
   "Return record-actions to unlist certain machines as blocked."
   [model]
   (let [clock (:clock model)
-        old-blocked (:blocked model)
-        new-unblocked (filter #(and
-                                (contains? old-blocked (:name %))
-                                (not (buffer-full? model %)))
-                              (machines model))]
-    (when (not-empty new-unblocked)
-      (map (fn [mn] `(~clock (new-unblocked ~(:name mn)))) new-unblocked))))
+        old-block (:blocked model)
+        new-unblock (filter #(and
+                              (contains? old-block (:name %))
+                              (not (buffer-full? model %)))
+                            (machines model))]
+    (when (not-empty new-unblock)
+      (vec (map (fn [mn] {:time clock :fn new-unblocked :args (list (:name mn))}) new-unblock)))))
 
 (defn new-starved?
   "Return record-actions to add starved machines."
   [model]
   (let [clock (:clock model)
-        old-starved (:starved model)
-        new-starved (filter #(and 
+        old-starve (:starved model)
+        new-starve (filter #(and 
                               (finished? model %)
-                              (not (contains? old-starved (:name %)))
+                              (not (contains? old-starve (:name %)))
                               (feed-buffer-empty? model %))
                             (machines model))]
-    (when (not-empty new-starved)
-      (map (fn [mn] `(~clock (new-starved ~(:name mn)))) new-starved))))
+    (when (not-empty new-starve)
+      (vec (map (fn [mn] {:time clock :fn new-starved :args (list (:name mn))}) new-starve)))))
 
 (defn new-unstarved?
   "Return record-actions to unlist certain machines as starved."
   [model]
   (let [clock (:clock model)
-        old-starved (:starved model)
-        new-unstarved (filter #(and
-                                (contains? old-starved (:name %))
+        old-unstarve (:starved model)
+        new-unstarve (filter #(and
+                                (contains? old-unstarve (:name %))
                                 (not (feed-buffer-empty? model %)))
                               (machines model))]
-    (when (not-empty new-unstarved)
-      (map (fn [mn] `(~clock (new-unstarved ~(:name mn)))) new-unstarved))))
+    (when (not-empty new-unstarve)
+      (vec (map (fn [mn] {:time clock :fn new-unstarved :args (list (:name mn))}) new-unstarve)))))
 
 (defn advance2buffer?
   "Return actions to buffer and times at which these can occur (which may be later than clock)."
@@ -360,8 +346,8 @@
                           (not (buffer-full? model %)))
                         (machines model))]
     (when (not-empty advance)
-      (map (fn [mn] `(~(max (:clock model) (:ends (:status mn))) ; Key idea!
-                      (advance2buffer ~(:name mn)))) advance))))
+      (vec (map (fn [mn] {:time (max (:clock model) (:ends (:status mn))) ; Key idea!
+                          :fn advance2buffer :args (list (:name mn))}) advance)))))
 
 (defn advance2machine?
   "Return actions to move jobs onto machine. Can be done now." 
@@ -375,7 +361,7 @@
                           (not (feed-buffer-empty? model %)))
                         (machines model))]
     (when (not-empty advance)
-      (map (fn [mn] `(~clock (advance2machine ~(:name mn)))) advance))))
+      (vec (map (fn [mn] {:time clock :fn advance2machine :args (list (:name mn))}) advance)))))
 
 (defn runables
   "Return a sequence of actions and record-actions and 
@@ -391,20 +377,22 @@
              (new-blocked? model)  
              (new-unblocked? model))]
     (when (not-empty all)
-      (let [min-time (apply min (map first all))]
-        (filter (fn [[time _]] (= time min-time)) all)))))
+      (let [min-time (apply min (map :time all))]
+        (filter #(= (:time %) min-time) all)))))
       
 (defn run-action
   "Run a single action, returning the model."
-  [model [fname & args]]
-  ;(reset! +diag+ {:where 'run-action :fname fname :args args :model model})
-  (apply (partial (var-get (resolve fname)) model) args))
+  [model act]
+  ;(reset! +diag+ {:where 'run-action :act act})
+  (apply (partial (:fn act) model) (:args act)))
 
 (defn run-actions
   "Run a list of actions in the order they appear in actions; 
    update the model while doing so."
   [model actions]
-  (reduce (fn [m a] (run-action m (vec a))) model actions)) 
+  (as-> model ?m
+    (reduce (fn [m a] (run-action m a)) ?m actions)
+    (reset! +diag+ ?m)))
 
 (defn p-state-change
   "Calculate probability of a flip = 1- e^(-rate t) : exponential CDF."
@@ -444,15 +432,15 @@
   [model]
   model)
 
-(defn preprocess-equip ; POD defmethod
+(defn preprocess-equip
   [[k e]]
   (cond (= (type e) ExpoMachine)
         (as-> e ?m 
           (assoc ?m :mchain (exponential-up&down (:lambda ?m) (:mu ?m)))
           (assoc ?m :future ((:mchain ?m)))
           (assoc ?m :name k)
-          (dissoc ?m :lambda)
-          (dissoc ?m :mu)
+          ;(dissoc ?m :lambda)
+          ;(dissoc ?m :mu)
           [k ?m]),
         (= (type e) ReliableMachine)
         (as-> e ?m 
@@ -483,67 +471,104 @@
         (assoc :starved #{})
         (assoc-in [:params :current-job] 0))))
 
-(defn results-form 
-  "Create a results for map."
+(def +log+ (atom nil))
+
+(defn log-form! 
+  "Side-effect:Create a results for map. Return model untouched."
   [model]
-   (as-> {:residence-sum 0.0, :njobs 0} ?r
-     (into ?r (map (fn [m] [m {:blocked 0.0 :starved 0.0 :bs nil :ss nil}])
-                   (:machines model)))
-     (into ?r (map (fn [b] [(:name b) (assoc (zipmap (range (inc (:N b))) (repeat (+ 2 (:N b)) 0.0))
-                                             :lastclk (:warm-up-time (:params model)))])
-                   (map #(lookup model %) (:buffers model))))))
+  (reset! +log+ 
+          (as-> {:residence-sum 0.0, :njobs 0} ?r
+            (into ?r (map (fn [m] [m {:blocked 0.0 :starved 0.0 :bs nil :ss nil}])
+                          (:machines model)))
+            (into ?r (map (fn [b] [(:name b) (assoc (zipmap (range (inc (:N b))) (repeat (+ 2 (:N b)) 0.0))
+                                                    :lastclk (:warm-up-time (:params model)))])
+                          (map #(lookup model %) (:buffers model))))))
+  model)
 
 (defn calc-basics
-  "Update results with percent time blocked, and job residence time."
-  [res model]
+  "Produce a results form containing percent time blocked, and job residence time."
+  [log model]
   (let [warm-up-time (:warm-up-time (:params model))
         run-time (- (:run-to-time (:params model)) warm-up-time)
-        residence-sum (:residence-sum res)
-        njobs (:njobs res)]
+        residence-sum (:residence-sum log)
+        njobs (:njobs log)]
     {:runtime run-time
      :TP (float (/ njobs run-time))
-     :observed-residence-time (/ residence-sum njobs)
+     :observed-residence-time (if (= 0 njobs) :na (/ residence-sum njobs))
      :number-of-jobs njobs
-     :blocked (into {} (map #(vector % (/ (:blocked (% res)) run-time)) (:machines model)))
-     :starved (into {} (map #(vector % (/ (:starved (% res)) run-time)) (:machines model)))
-     :wip (into {} (map (fn [bf] (vector bf (/ (apply + (map (fn [n t] (* n t))
-                                                             (keys (dissoc (bf res) :lastclk))
-                                                             (vals (dissoc (bf res) :lastclk))))
-                                               run-time)))
-                        (:buffers model)))}))
+     :blocked (into {} (map #(vector % (/ (:blocked (% log)) run-time)) (:machines model)))
+     :starved (into {} (map #(vector % (/ (:starved (% log)) run-time)) (:machines model)))
+     :avg-buffer-occupancy (into {} (map (fn [bf] (vector bf (/ (apply + (map (fn [n t] (* n t))
+                                                                          (keys (dissoc (bf log) :lastclk))
+                                                                          (vals (dissoc (bf log) :lastclk))))
+                                                            run-time)))
+                                     (:buffers model)))}))
 
 (defn calc-bneck
   "Update results with identification of bottlenecks."
   [res model]
-  (let [m-order (filter #(machine? (lookup model %)) (:topology model))]
+  (let [^clojure.lang.PersistentVector m-order (:machines model)]
     (letfn [(mIndex [m] (inc (.indexOf m-order m)))
             (bl [i] (nth (vals (:blocked res)) (dec i)))
             (st [i] (nth (vals (:starved res)) (dec i)))]
       (let [candidates (filter #(when (not= % (last m-order))
-                                  (< (bl (mIndex %)) (st (inc (mIndex %)))))  m-order)]
+                                  (< (bl (mIndex %)) (st (inc (mIndex %))))) m-order)]
+        (println "Candidates =" candidates)
         (if (= 1 (count candidates))
-          (assoc res :bneck (first candidates))
-          (let [m  (count (:machines model))
-                severity (map (fn [i]
-                                (cond
-                                  (= i 1) (abs (- (bl 1) (st 2)))
-                                  (= i m) (abs (- (bl (dec m)) (st m)))
-                                  :else   (+ (abs (- (bl (dec i)) (st i)))
-                                             (abs (- (bl i) (st (inc i)))))))
-                              (range 2 m))]
-            (assoc res :bneck 
-                   (nth m-order (+ (.indexOf (max severity) severity) 2)))))))))
+          (assoc res :bottleneck-machine (first candidates))
+          (let [mcnt  (count m-order)
+                ^clojure.lang.LazySeq severity
+                (zipmap (:machines model)
+                        (map (fn [i]
+                               (cond
+                                 (= i 1) (abs (- (bl 1) (st 2)))
+                                 (= i mcnt) (abs (- (bl (dec mcnt)) (st mcnt)))
+                                 :else   (+ (abs (- (bl (dec i)) (st i)))
+                                            (abs (- (bl i) (st (inc i)))))))
+                             (range 1 (inc mcnt))))]
+            (println "severity = " severity)
+            (let [max-val (apply max (vals severity))]
+              (assoc res :bottleneck-machine
+                     (first (first (filter (fn [[k v]] (= v max-val)) severity)))))))))))
 
-(defn calc-residence-time ; POD update for MJP
-  "Calculate job residence time as function of WIP, SL and BL."
+(defn calc-residence-time ; POD Needs work!
+  "Calculate job residence time as function of processing time, and :buffer-residency, and BL."
   [res model]
-  (let [job (map->Job {:type :jobType1})
-        j-requires (map #(job-requires model job %) (map #(lookup model %) (:machines model)))
-        j-requires (map (fn [jr mn] (* (+ 1.0 (mn (:starved res)) (mn (:blocked res))) jr))
-                        j-requires (:machines model))
-        j-requires (map (fn [jr bflen] (+ jr (* bflen jr)))
-                        j-requires (conj (vals (:wip res)) 0.0))]
-    (assoc res :computed-residence-time (apply + j-requires))))
+  (let [mach-effs (zipmap
+                   (:machines model)
+                   (map (fn [mn]
+                          (let [m (lookup model mn)]
+                            (/ (:mu m)  (+ (:lambda m) (:mu m)))))
+                        (:machines model))),
+        virt-processing
+        (zipmap
+         (:machines model)
+         (map (fn [mn]
+                (apply + (map (fn [jt]
+                                (* (:portion (jt (:jobmix model)))
+                                   (/ 1.0 (mn mach-effs))
+                                   (job-requires model (map->Job {:type jt}) (lookup model mn))))
+                              (keys (:jobmix model)))))
+              (:machines model)))]
+    (assoc res :computed-residence-time
+           (zipmap
+            (keys (:jobmix model))
+            (map (fn [jtype]
+                   (let [job (map->Job {:type jtype})]
+                     (+  (apply + ; processing time
+                                (map (fn [mn] (* (/ 1.0 (mn mach-effs))
+                                                 (+ 1.0 (mn (:blocked res)))
+                                                 (job-requires model job (lookup model mn))))
+                                     (:machines model)))
+                         (apply + ; wait time. 
+                                (map (fn [mn]
+                                       (if (= mn (:entry-point model))
+                                         0 ; 0.5 (below) is half of vjob being worked.
+                                         (* (+ 0.5 ((takes-from model mn) (:avg-buffer-occupancy res)))
+                                            (mn virt-processing)
+                                            (+ 1.0 (mn (:blocked res))))))
+                                     (:machines model))))))
+                 (keys (:jobmix model)))))))
 
 ;;; Examples
 ;;;   r = {... :b2 {0 0.0, 1 0.0, 2 0.0, 3 0.0, 4 0.0, 5 0.0 :lastclk 0.0}},
@@ -601,11 +626,9 @@
       (update-in [:residence-sum] + (- (:clk o) (:ent o)))
       (update-in [:njobs] inc)))
 
-(def +log-results+ (atom nil))
-
 (defn log [log-map]
   (when (> (:clk log-map) @+warm-up-time+)
-    (swap! +log-results+
+    (swap! +log+
            #(case (:act log-map)
               :bj (buf+    % log-map)
               :sm (buf-    % log-map)
@@ -615,44 +638,54 @@
               :st (starve+ % log-map)
               :us (starve- % log-map)))))
 
-(defn analyze-results [model]
-  "Read the w-<date> output file and compute results. model argument is only for (:machines model)."
-    (as-> @+log-results+ ?r
-      (calc-basics ?r model)
-      (calc-bneck ?r model)
-      (calc-residence-time ?r model)))
-
-(defn clear-memos
-  []
-  (m/memo-clear! buffers-to)
-  (m/memo-clear! feeds)
-  (m/memo-clear! takes-from))
+(defn analyze-results [log model]
+  "Read the w-<date> output file and compute results."
+    (as-> (calc-basics log model) ?res
+      (calc-bneck ?res model)
+      #_(calc-residence-time ?res model)))
 
 (defn main-loop 
   "Run a simulation."
   [model]
-  ;;(reset! +diag-expect-job+ 1)
-  (clear-memos)
-  (let [model (preprocess-model model)]
-    (reset! +log-results+ (results-form model))
+  (let [start (System/currentTimeMillis)
+        job-end  (:run-to-job  (:params model))
+        time-end (:run-to-time (:params model))]
     (as-> model ?m
+      (preprocess-model ?m)
+      (log-form! ?m) ; create +log+ return model. 
       (loop [model ?m]
-        (if-let [run (not-empty (runables model))]
-          (let [model (advance-clock model (first (first run)))]
-            (if true 
-              (if (or (and (:run-to-job (:params model))
-                           (<= (:current-job (:params model)) (:run-to-job (:params model))))
-                      (and (:run-to-time (:params model))
-                           (<= (:clock model) (:run-to-time (:params model)))))
-                (recur (run-actions model (map second run)))
-                (assoc-in model [:params :status] :normal-end))
-              (assoc-in model [:params :status] :over-ran)))
+        (if-let [actions (not-empty (runables model))]
+          (let [model (advance-clock model (:time (first actions)))]
+            (if (or (and (:run-to-job (:params model))
+                         (<= (:current-job (:params model)) job-end))
+                    (and (:run-to-time (:params model))
+                         (<= (:clock model) time-end)))
+              (recur (run-actions model actions))
+              (assoc-in model [:params :status] :normal-end)))
           (assoc-in model [:params :status] :no-runables)))
-      (reset! +diag+ ?m)
-      (analyze-results ?m) 
-      (assoc ?m :status (:status (:params model))))))
+      (-> (analyze-results @+log+ ?m)
+          (assoc :status (:status (:params ?m)))
+          (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))
 
 (def f1
+  (map->Model
+   {:line 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 }) 
+     :b1 (map->Buffer {:N 3})
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
+     :b2 (map->Buffer {:N 5})
+     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
+     :b3 (map->Buffer {:N 1})
+     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
+     :b4 (map->Buffer {:N 1})
+     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })}
+    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
+    :entry-point :m1 ; 
+    :params {:warm-up-time 20000 :run-to-time 200000}  
+    :jobmix {:jobType1 (map->JobType {:portion 0.8
+                                      :w {:m1 1.0, :m2 1.0, :m3 10.0, :m4 1.0, :m5 1.0}})}}))
+
+(def f2
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) 
@@ -665,12 +698,14 @@
      :b4 (map->Buffer {:N 1})
      :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })}
     :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
-    :entry-point :m1 ; 
-    :params {:warm-up-time 2000 :run-to-time 20000}  
+    :entry-point :m1 
+    :params {:warm-up-time 20000 :run-to-time 200000}  
     :jobmix {:jobType1 (map->JobType {:portion 0.8
                                       :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
              :jobType2 (map->JobType {:portion 0.2
-                                      :w {:m1 1.0, :m2 2.0, :m3 1.0, :m4 1.5, :m5 1.0}})}}))
+                                      :w {:m1 1.0, :m2 1.0, :m3 1.3, :m4 1.0, :m5 1.0}})}}))
+
+
 
 
 
