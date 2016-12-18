@@ -5,6 +5,8 @@ pom.xml.asc
 /classes/
 /target/
 /checkouts/
+/src/gov/nist/junk/
+/resources/notes.txt
 .lein-deps-sum
 .lein-repl-history
 .lein-plugins/
