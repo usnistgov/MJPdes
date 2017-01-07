@@ -681,15 +681,15 @@
      :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })}
     :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
     :entry-point :m1 ; 
-    :params {:warm-up-time 20000 :run-to-time 200000}  
-    :jobmix {:jobType1 (map->JobType {:portion 0.8
-                                      :w {:m1 1.0, :m2 1.0, :m3 10.0, :m4 1.0, :m5 1.0}})}}))
+    :params {:warm-up-time 2000 :run-to-time 20000}  
+    :jobmix {:jobType1 (map->JobType {:portion 1.0
+                                      :w {:m1 1.0, :m2 1.0, :m3 2.0, :m4 1.0, :m5 1.0}})}}))
 
 (def f2
-  (map->Model
+    (map->Model
    {:line 
-    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) 
-     :b1 (map->Buffer {:N 3})
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine :m1
+     :b1 (map->Buffer {:N 3})                             ; the definition of buffer :b1
      :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
      :b2 (map->Buffer {:N 5})
      :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
@@ -697,12 +697,12 @@
      :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.05 })
      :b4 (map->Buffer {:N 1})
      :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })}
-    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
-    :entry-point :m1 
-    :params {:warm-up-time 20000 :run-to-time 200000}  
-    :jobmix {:jobType1 (map->JobType {:portion 0.8
+    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5] ; the arrangement of the line
+    :entry-point :m1 ; where jobs start
+    :params {:warm-up-time 20000 :run-to-time 100000}  
+    :jobmix {:jobType1 (map->JobType {:portion 0.8 ; 80% of jobs will be of type :jobType1.
                                       :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
-             :jobType2 (map->JobType {:portion 0.2
+             :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type :jobType2.
                                       :w {:m1 1.0, :m2 1.0, :m3 1.3, :m4 1.0, :m5 1.0}})}}))
 
 

@@ -10,7 +10,7 @@
                  [medley "0.8.3"]
                  ;[org.clojure/core.memoize "0.5.8"]
                  [incanter/incanter-core "1.9.1"]]
-  :warn-on-reflection true
+;  :warn-on-reflection true ; deprecated.
   :bin {:name "MJPdes"
 ;       :bin-path "~/bin"
         :bootclasspath true}
