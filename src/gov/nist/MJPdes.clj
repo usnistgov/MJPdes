@@ -439,8 +439,7 @@
           (assoc ?m :mchain (exponential-up&down (:lambda ?m) (:mu ?m)))
           (assoc ?m :future ((:mchain ?m)))
           (assoc ?m :name k)
-          ;(dissoc ?m :lambda)
-          ;(dissoc ?m :mu)
+          (assoc ?m :W (if (number? (:W ?m)) (:W ?m) (rand-range (:bounds (:W ?m)))))
           [k ?m]),
         (= (type e) ReliableMachine)
         (as-> e ?m 
@@ -460,30 +459,39 @@
   [model]
   (reset! +warm-up-time+ (:warm-up-time (:params model)))
   (let [jm2dm (or (:jm2dm model) +default-jobs-move-to-down-machines+)]
-    (-> model 
-        (check-model)
-        (assoc :jm2dm jm2dm)
-        (assoc :line (into (sorted-map) (map preprocess-equip (:line model))))
-        (assoc :machines (vec (filter #(machine? (lookup model %)) (:topology model))))
-        (assoc :buffers  (vec (filter #(buffer?  (lookup model %)) (:topology model))))
-        (assoc :clock 0.0)
-        (assoc :blocked #{})
-        (assoc :starved #{})
-        (assoc-in [:params :current-job] 0))))
+    (as-> model ?m
+        (check-model ?m)
+        (assoc ?m :jm2dm jm2dm)
+        (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
+        (assoc ?m :machines (vec (filter #(machine? (lookup model %)) (:topology model))))
+        (assoc ?m :buffers  (vec (filter #(buffer?  (lookup model %)) (:topology model))))
+        (assoc ?m :clock 0.0)
+        (assoc ?m :blocked #{})
+        (assoc ?m :starved #{})
+        (assoc ?m :jobmix ; set jobtype :w values, which may be differ stochastically for each simulation
+               (reduce (fn [jmix jt-key] 
+                         (assoc jmix jt-key
+                                (assoc (jt-key jmix)
+                                       :w
+                                       (reduce-kv (fn [m k v] 
+                                                    (assoc m k (if (number? v) v (rand-range (:bounds v)))))
+                                                  (:w (jt-key jmix))     ;init
+                                                  (:w (jt-key jmix)))))) ;collection
+                       (:jobmix ?m) (keys (:jobmix ?m))))
+        (assoc-in ?m [:params :current-job] 0))))
 
-(def +log+ (atom nil))
+(def ^:dynamic *log* nil)
+(def ^:dynamic *model* nil)
 
-(defn log-form! 
+(defn log-form
   "Side-effect:Create a results for map. Return model untouched."
   [model]
-  (reset! +log+ 
-          (as-> {:residence-sum 0.0, :njobs 0} ?r
-            (into ?r (map (fn [m] [m {:blocked 0.0 :starved 0.0 :bs nil :ss nil}])
-                          (:machines model)))
-            (into ?r (map (fn [b] [(:name b) (assoc (zipmap (range (inc (:N b))) (repeat (+ 2 (:N b)) 0.0))
-                                                    :lastclk (:warm-up-time (:params model)))])
-                          (map #(lookup model %) (:buffers model))))))
-  model)
+  (as-> {:residence-sum 0.0, :njobs 0} ?r
+    (into ?r (map (fn [m] [m {:blocked 0.0 :starved 0.0 :bs nil :ss nil}])
+                  (:machines model)))
+    (into ?r (map (fn [b] [(:name b) (assoc (zipmap (range (inc (:N b))) (repeat (+ 2 (:N b)) 0.0))
+                                            :lastclk (:warm-up-time (:params model)))])
+                  (map #(lookup model %) (:buffers model))))))
 
 (defn calc-basics
   "Produce a results form containing percent time blocked, and job residence time."
@@ -628,7 +636,7 @@
 
 (defn log [log-map]
   (when (> (:clk log-map) @+warm-up-time+)
-    (swap! +log+
+    (swap! *log*
            #(case (:act log-map)
               :bj (buf+    % log-map)
               :sm (buf-    % log-map)
@@ -644,46 +652,64 @@
       (calc-bneck ?res model)
       #_(calc-residence-time ?res model)))
 
+(def +sims+ (atom nil))
+
 (defn main-loop 
-  "Run a simulation."
+  "Run one or more simulations."
   [model]
-  (let [start (System/currentTimeMillis)
-        job-end  (:run-to-job  (:params model))
-        time-end (:run-to-time (:params model))]
-    (as-> model ?m
-      (preprocess-model ?m)
-      (log-form! ?m) ; create +log+ return model. 
-      (loop [model ?m]
-        (if-let [actions (not-empty (runables model))]
-          (let [model (advance-clock model (:time (first actions)))]
-            (if (or (and (:run-to-job (:params model))
-                         (<= (:current-job (:params model)) job-end))
-                    (and (:run-to-time (:params model))
-                         (<= (:clock model) time-end)))
-              (recur (run-actions model actions))
-              (assoc-in model [:params :status] :normal-end)))
-          (assoc-in model [:params :status] :no-runables)))
-      (-> (analyze-results @+log+ ?m)
-          (assoc :status (:status (:params ?m)))
-          (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))
+  (reset! +sims+ []) ; could use reduce/range and an ordinary variable.
+  (dotimes [n (or (:number-of-simulations model) 1)]
+    (swap! +sims+ conj
+           (future
+             (let [start (System/currentTimeMillis)
+                   job-end  (:run-to-job  (:params model))
+                   time-end (:run-to-time (:params model))]
+               (as-> model ?m
+                 (preprocess-model ?m)
+                 (binding [*log* (atom (log-form ?m))] ; create *log* return model. 
+                   (loop [model ?m]
+                     (if-let [actions (not-empty (runables model))]
+                       (let [model (advance-clock model (:time (first actions)))]
+                         (if (or (and (:run-to-job (:params model))
+                                      (<= (:current-job (:params model)) job-end))
+                                 (and (:run-to-time (:params model))
+                                      (<= (:clock model) time-end)))
+                           (recur (run-actions model actions))
+                           (assoc-in model [:params :status] :normal-end)))
+                       (assoc-in model [:params :status] :no-runables)))
+                   (-> (analyze-results @*log* ?m)
+                       (assoc :process-id n)
+                       (assoc :jobmix (:jobmix ?m))
+                       (assoc :status (:status (:params ?m)))
+                       (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0)))))))))
+  (map (fn [sim] (pprint @sim)) @+sims+))
+
+(defn rand-range
+  [[lbound ubound]]
+  (+ lbound (* (rand) (- ubound lbound))))
 
 (def f1
   (map->Model
    {:line 
-    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 }) 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}}) 
      :b1 (map->Buffer {:N 3})
-     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
      :b2 (map->Buffer {:N 5})
-     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
+     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
      :b3 (map->Buffer {:N 1})
-     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
+     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
      :b4 (map->Buffer {:N 1})
-     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })}
+     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})}
+    :number-of-simulations 10
     :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
     :entry-point :m1 ; 
     :params {:warm-up-time 2000 :run-to-time 20000}  
     :jobmix {:jobType1 (map->JobType {:portion 1.0
-                                      :w {:m1 1.0, :m2 1.0, :m3 2.0, :m4 1.0, :m5 1.0}})}}))
+                                      :w {:m1 1.0,
+                                          :m2 1.0,
+                                          :m3 1.0,
+                                          :m4 1.0,
+                                          :m5 1.01}})}}))
 
 (def f2
     (map->Model
