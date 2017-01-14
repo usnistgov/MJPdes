@@ -432,6 +432,10 @@
   [model]
   model)
 
+(defn rand-range
+  [[lbound ubound]]
+  (+ lbound (* (rand) (- ubound lbound))))
+
 (defn preprocess-equip
   [[k e]]
   (cond (= (type e) ExpoMachine)
@@ -521,7 +525,7 @@
             (st [i] (nth (vals (:starved res)) (dec i)))]
       (let [candidates (filter #(when (not= % (last m-order))
                                   (< (bl (mIndex %)) (st (inc (mIndex %))))) m-order)]
-        (println "Candidates =" candidates)
+        ;(println ";Candidates =" candidates)
         (if (= 1 (count candidates))
           (assoc res :bottleneck-machine (first candidates))
           (let [mcnt  (count m-order)
@@ -534,7 +538,7 @@
                                  :else   (+ (abs (- (bl (dec i)) (st i)))
                                             (abs (- (bl i) (st (inc i)))))))
                              (range 1 (inc mcnt))))]
-            (println "severity = " severity)
+            ;(println ";severity = " severity)
             (let [max-val (apply max (vals severity))]
               (assoc res :bottleneck-machine
                      (first (first (filter (fn [[k v]] (= v max-val)) severity)))))))))))
@@ -652,41 +656,38 @@
       (calc-bneck ?res model)
       #_(calc-residence-time ?res model)))
 
-(def +sims+ (atom nil))
-
 (defn main-loop 
   "Run one or more simulations."
-  [model]
-  (reset! +sims+ []) ; could use reduce/range and an ordinary variable.
-  (dotimes [n (or (:number-of-simulations model) 1)]
-    (swap! +sims+ conj
-           (future
-             (let [start (System/currentTimeMillis)
-                   job-end  (:run-to-job  (:params model))
-                   time-end (:run-to-time (:params model))]
-               (as-> model ?m
-                 (preprocess-model ?m)
-                 (binding [*log* (atom (log-form ?m))] ; create *log* return model. 
-                   (loop [model ?m]
-                     (if-let [actions (not-empty (runables model))]
-                       (let [model (advance-clock model (:time (first actions)))]
-                         (if (or (and (:run-to-job (:params model))
-                                      (<= (:current-job (:params model)) job-end))
-                                 (and (:run-to-time (:params model))
-                                      (<= (:clock model) time-end)))
-                           (recur (run-actions model actions))
-                           (assoc-in model [:params :status] :normal-end)))
-                       (assoc-in model [:params :status] :no-runables)))
-                   (-> (analyze-results @*log* ?m)
-                       (assoc :process-id n)
-                       (assoc :jobmix (:jobmix ?m))
-                       (assoc :status (:status (:params ?m)))
-                       (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0)))))))))
-  (map (fn [sim] (pprint @sim)) @+sims+))
-
-(defn rand-range
-  [[lbound ubound]]
-  (+ lbound (* (rand) (- ubound lbound))))
+  [model & {:keys [out-stream] :or {out-stream *out*}}]
+  (println ";out-stream =" out-stream)
+  (binding [*out* out-stream]
+    (let [sims 
+          (map
+           (fn [n]
+             (future
+               (let [start (System/currentTimeMillis)
+                     job-end  (:run-to-job  (:params model))
+                     time-end (:run-to-time (:params model))]
+                 (as-> model ?m
+                   (preprocess-model ?m)
+                   (binding [*log* (atom (log-form ?m))] ; create *log* return model. 
+                     (loop [model ?m]
+                       (if-let [actions (not-empty (runables model))]
+                         (let [model (advance-clock model (:time (first actions)))]
+                           (if (or (and (:run-to-job (:params model))
+                                        (<= (:current-job (:params model)) job-end))
+                                   (and (:run-to-time (:params model))
+                                        (<= (:clock model) time-end)))
+                             (recur (run-actions model actions))
+                             (assoc-in model [:params :status] :normal-end)))
+                         (assoc-in model [:params :status] :no-runables)))
+                     (-> (analyze-results @*log* ?m)
+                         (assoc :process-id n)
+                         (assoc :jobmix (:jobmix ?m))
+                         (assoc :status (:status (:params ?m)))
+                         (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))))
+           (range (or (:number-of-simulations model) 1)))]
+      (doall (map (fn [sim] (pprint @sim out-stream)) sims)))))
 
 (def f1
   (map->Model
