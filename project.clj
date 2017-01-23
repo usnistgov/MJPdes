@@ -1,4 +1,4 @@
-(defproject gov.nist/MJPdes "0.1.0-SNAPSHOT"
+(defproject gov.nist/MJPdes "0.2.0"
   :description "A discrete event simulation engine for Multi-Job Production"
   :url "https://github.com/usnistgov/desim"
   :license {:name "See the github site for details"
