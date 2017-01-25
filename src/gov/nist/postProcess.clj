@@ -29,7 +29,8 @@
         {:starvation {:min (apply min starve)
                       :max (apply max starve)
                       :mean (mean starve)
-                      :variance (variance starve)}}))))
+                      :variance (variance starve)
+                      :values starve}}))))
       
       
 

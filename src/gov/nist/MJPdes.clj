@@ -313,16 +313,29 @@
     (when (not-empty new-unblock)
       (vec (map (fn [mn] {:time clock :fn new-unblocked :args (list (:name mn))}) new-unblock)))))
 
+(def ^:dynamic *starved?-fn*
+  (fn [model]
+    (let [old-starve (:starved model)]
+      (filter 
+       #(and
+         (not (contains? old-starve (:name %)))
+         (finished? model %)
+         (feed-buffer-empty? model %))
+       (machines model)))))
+
+(def ^:dynamic *unstarved?-fn*
+  (fn [model]
+    (let [old-starve (:starved model)]
+      (filter #(and
+                (contains? old-starve (:name %))
+                (not (feed-buffer-empty? model %)))
+              (machines model)))))
+
 (defn new-starved?
   "Return record-actions to add starved machines."
   [model]
   (let [clock (:clock model)
-        old-starve (:starved model)
-        new-starve (filter #(and 
-                              (finished? model %)
-                              (not (contains? old-starve (:name %)))
-                              (feed-buffer-empty? model %))
-                            (machines model))]
+        new-starve (*starved?-fn* model)]
     (when (not-empty new-starve)
       (vec (map (fn [mn] {:time clock :fn new-starved :args (list (:name mn))}) new-starve)))))
 
@@ -330,11 +343,7 @@
   "Return record-actions to unlist certain machines as starved."
   [model]
   (let [clock (:clock model)
-        old-unstarve (:starved model)
-        new-unstarve (filter #(and
-                                (contains? old-unstarve (:name %))
-                                (not (feed-buffer-empty? model %)))
-                              (machines model))]
+        new-unstarve (*unstarved?-fn* model)]
     (when (not-empty new-unstarve)
       (vec (map (fn [mn] {:time clock :fn new-unstarved :args (list (:name mn))}) new-unstarve)))))
 
@@ -656,10 +665,12 @@
       (calc-bneck ?res model)
       #_(calc-residence-time ?res model)))
 
+(def +kill-all+ (atom false))
+
 (defn main-loop 
   "Run one or more simulations."
   [model & {:keys [out-stream] :or {out-stream *out*}}]
-  (println ";out-stream =" out-stream)
+  (reset! +kill-all+ false)
   (binding [*out* out-stream]
     (let [sims 
           (map
@@ -672,7 +683,7 @@
                    (preprocess-model ?m)
                    (binding [*log* (atom (log-form ?m))] ; create *log* return model. 
                      (loop [model ?m]
-                       (if-let [actions (not-empty (runables model))]
+                       (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
                          (let [model (advance-clock model (:time (first actions)))]
                            (if (or (and (:run-to-job (:params model))
                                         (<= (:current-job (:params model)) job-end))
@@ -687,7 +698,23 @@
                          (assoc :status (:status (:params ?m)))
                          (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))))
            (range (or (:number-of-simulations model) 1)))]
-      (doall (map (fn [sim] (pprint @sim out-stream)) sims)))))
+      (if (or (not (:number-of-simulations model))
+              (= 1 (:number-of-simulations model)))
+        @(first sims)
+        (doall (map (fn [sim] (pprint @sim out-stream)) sims))))))
+
+
+(def submodel-1
+  (map->Model
+   {:line 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
+     :b1 (map->Buffer {:N 3})
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
+    :number-of-simulations 1
+    :topology [:m1 :b1 :m2]
+    :entry-point :m1
+    :params {:warm-up-time 2000 :run-to-time 10000} ; Was 20000 on training.
+    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.0}})}}))
 
 (def f1
   (map->Model
