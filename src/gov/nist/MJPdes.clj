@@ -17,6 +17,7 @@
 ;;;   - fix blocked-requires-not-starved
 
 (def +default-jobs-move-to-down-machines+ false)
+(def +log-scada+ (atom {:log? true :max 1000 :cnt 0}))
 (def +diag+ (atom nil))
 (def +warm-up-time+ (atom nil))
 ;(def +diag-expect-job+ (atom 0))
@@ -172,10 +173,10 @@
   "Nothing to do here but (possible) loggging. The clock was advanced and 
    machine futures updated by call to advance-clock in main-loop."
   [model m-name]
-  ;(let [m (lookup model m-name)] ; diag
-    ;(when (up? m-name) (throw (ex-info "Machine is already up!" {:machine m-name})))
+  (let [m (lookup model m-name)] ; diag
+    (when (up? m-name) (throw (ex-info "Machine is already up!" {:machine m-name})))
     ;(log {:act :up :m m-name :clk (:clock model)}) ; not essential
-    model)
+    model))
 
 (defn add-job
   "Add a job to the line. Save the time it completes on the machine."
@@ -187,7 +188,7 @@
               (assoc ?j :enters (:clock model))
               (assoc ?j :starts (:clock model))
               (assoc ?j :ends ends))]
-    ;(log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model)}) ; not essential
+    (log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model)}) ; not essential
     (-> model
         (update-in [:params :current-job] inc)
         (assoc-in [:line m-name :status] job)
@@ -647,7 +648,15 @@
       (update-in [:residence-sum] + (- (:clk o) (:ent o)))
       (update-in [:njobs] inc)))
 
-(defn log [log-map]
+(defn log
+  "Collect data: (1) essential for calculating performance measures, (2) example SCADA."
+  [log-map]
+  (let [scada @+log-scada+]
+    (when (and (:log? scada)
+               (> (:max scada) (:cnt scada))
+               (> (:clk log-map) @+warm-up-time+))
+      (swap! +log-scada+ #(update % :cnt inc))
+      (println log-map)))
   (when (> (:clk log-map) @+warm-up-time+)
     (swap! *log*
            #(case (:act log-map)
@@ -657,7 +666,8 @@
               :bl (block+  % log-map) 
               :ub (block-  % log-map)
               :st (starve+ % log-map)
-              :us (starve- % log-map)))))
+              :us (starve- % log-map)
+              :aj @*log*))))
 
 (defn analyze-results [log model]
   "Read the w-<date> output file and compute results."
@@ -671,6 +681,7 @@
   "Run one or more simulations."
   [model & {:keys [out-stream] :or {out-stream *out*}}]
   (reset! +kill-all+ false)
+  (swap! +log-scada+ #(assoc % :cnt 0))
   (binding [*out* out-stream]
     (let [sims 
           (map
@@ -681,7 +692,7 @@
                      time-end (:run-to-time (:params model))]
                  (as-> model ?m
                    (preprocess-model ?m)
-                   (binding [*log* (atom (log-form ?m))] ; create *log* return model. 
+                   (binding [*log* (atom (log-form ?m))] ; create *log*. Return model. 
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
                          (let [model (advance-clock model (:time (first actions)))]
@@ -704,7 +715,7 @@
         (doall (map (fn [sim] (pprint @sim out-stream)) sims))))))
 
 
-(def submodel-1
+(def f0
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
@@ -714,7 +725,7 @@
     :topology [:m1 :b1 :m2]
     :entry-point :m1
     :params {:warm-up-time 2000 :run-to-time 10000} ; Was 20000 on training.
-    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.0}})}}))
+    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.1}})}}))
 
 (def f1
   (map->Model
