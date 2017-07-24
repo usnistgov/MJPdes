@@ -17,12 +17,11 @@
 ;;;   - fix blocked-requires-not-starved
 
 (def +default-jobs-move-to-down-machines+ false)
-(def +log-scada+ (atom {:log? true :max 1000 :cnt 0}))
 (def +diag+ (atom nil))
 (def +warm-up-time+ (atom nil))
 ;(def +diag-expect-job+ (atom 0))
 
-(defrecord Model [line entry-point jobmix params topology])
+(defrecord Model [line entry-point jobmix params topology print])
 
 (defrecord Machine [])
 (defrecord ReliableMachine [name status])  ; For specific tests. Assume W=1
@@ -175,8 +174,8 @@
   [model m-name]
   (let [m (lookup model m-name)] ; diag
     (when (up? m-name) (throw (ex-info "Machine is already up!" {:machine m-name})))
-    ;(log {:act :up :m m-name :clk (:clock model)}) ; not essential
-    model))
+    (-> model
+        #_(log {:act :up :m m-name :clk (:clock model)})))) ; not essential
 
 (defn add-job
   "Add a job to the line. Save the time it completes on the machine."
@@ -188,8 +187,8 @@
               (assoc ?j :enters (:clock model))
               (assoc ?j :starts (:clock model))
               (assoc ?j :ends ends))]
-    (log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model)}) ; not essential
     (-> model
+        (log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model)}) ; not essential
         (update-in [:params :current-job] inc)
         (assoc-in [:line m-name :status] job)
         (assoc-in [:line m-name :future] future))))
@@ -207,12 +206,11 @@
         job (assoc job :ends ends)]
 ;;;    (when (= :up (first future))
 ;      (throw (ex-info "Expected an down future!" {:m-name m-name :model model})))
-    (log {:act :sm :bf b-name :j (:id job) ;:ends ends
-          :n (count (:holding b)) :clk (:clock model)})
-    (as-> model ?m
-      (assoc-in ?m  [:line m-name :status] job)
-      (assoc-in ?m  [:line m-name :future] future)
-      (update-in ?m [:line b-name :holding] #(vec (rest %))))))
+    (-> model 
+      (log {:act :sm :bf b-name :j (:id job) :n (count (:holding b)) :clk (:clock model)})
+      (assoc-in  [:line m-name :status] job)
+      (assoc-in  [:line m-name :future] future)
+      (update-in [:line b-name :holding] #(vec (rest %))))))
 
 (defn advance2buffer
   "Move a job to buffer." 
@@ -227,10 +225,10 @@
 ;    (swap! +diag-expect-job+ inc))
 ;    (when (and b? (= (count (:holding b?)) (:N b?))) ; diag
 ;      (throw (ex-info "buffer exceeds capacity!" {:model model :m-name :m-name})))
-    (if b?
-      (log {:act :bj :bf b? :j (:id job) :n (count (:holding (lookup model b?))) :clk now}) 
-      (log {:act :ej :m (:name m) :j (:id job) :ent (:enters job) :clk now}))
     (as-> model ?m
+      (if b?
+        (log ?m {:act :bj :bf b? :j (:id job) :n (count (:holding (lookup model b?))) :clk now}) 
+        (log ?m {:act :ej :m (:name m) :j (:id job) :ent (:enters job) :clk now}))
       (assoc-in ?m [:line m-name :status] nil)
       (if b?
         (update-in ?m [:line b? :holding] conj job)
@@ -240,23 +238,27 @@
 ;;;=============== Record-actions don't move jobs around. =======================
 (defn new-blocked
   [model m-name]
-  (log {:act :bl :m m-name :clk (:clock model)})
-  (update model :blocked conj m-name))
+  (-> model
+      (log {:act :bl :m m-name :clk (:clock model)})
+      (update :blocked conj m-name)))
 
 (defn new-unblocked
   [model m-name]
-  (log {:act :ub :m m-name :clk (:clock model)})
-  (update model :blocked disj m-name))
+  (-> model
+      (log {:act :ub :m m-name :clk (:clock model)})
+      (update :blocked disj m-name)))
 
 (defn new-starved
   [model m-name]
-  (log {:act :st :m m-name :clk (:clock model)})
-  (update model :starved conj m-name))
+  (-> model 
+      (log {:act :st :m m-name :clk (:clock model)})
+      (update :starved conj m-name)))
 
 (defn new-unstarved
   [model m-name]
-  (log {:act :us :m m-name :clk (:clock model)})
-  (update model :starved disj m-name))
+  (-> model
+      (log {:act :us :m m-name :clk (:clock model)})
+      (update :starved disj m-name)))
 ;;;=============== End of Record-actions ========================================
 (defn new-job
   "Randomly provide a new jobtype according to (:jobmix model)."
@@ -402,7 +404,7 @@
   [model actions]
   (as-> model ?m
     (reduce (fn [m a] (run-action m a)) ?m actions)
-    (reset! +diag+ ?m)))
+    #_(reset! +diag+ ?m)))
 
 (defn p-state-change
   "Calculate probability of a flip = 1- e^(-rate t) : exponential CDF."
@@ -474,27 +476,29 @@
   (reset! +warm-up-time+ (:warm-up-time (:params model)))
   (let [jm2dm (or (:jm2dm model) +default-jobs-move-to-down-machines+)]
     (as-> model ?m
-        (check-model ?m)
-        (assoc ?m :jm2dm jm2dm)
-        (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
-        (assoc ?m :machines (vec (filter #(machine? (lookup model %)) (:topology model))))
-        (assoc ?m :buffers  (vec (filter #(buffer?  (lookup model %)) (:topology model))))
-        (assoc ?m :clock 0.0)
-        (assoc ?m :blocked #{})
-        (assoc ?m :starved #{})
-        (assoc ?m :jobmix ; set jobtype :w values, which may be differ stochastically for each simulation
-               (reduce (fn [jmix jt-key] 
-                         (assoc jmix jt-key
-                                (assoc (jt-key jmix)
-                                       :w
-                                       (reduce-kv (fn [m k v] 
-                                                    (assoc m k (if (number? v) v (rand-range (:bounds v)))))
-                                                  (:w (jt-key jmix))     ;init
-                                                  (:w (jt-key jmix)))))) ;collection
-                       (:jobmix ?m) (keys (:jobmix ?m))))
-        (assoc-in ?m [:params :current-job] 0))))
+      (check-model ?m)
+      (assoc ?m :log-buf [])
+      (update-in ?m [:report] #(if (empty? %) {:log? false :line-cnt 0 :max-lines 0} (assoc % :line-cnt 0)))
+      (assoc ?m :jm2dm jm2dm)
+      (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
+      (assoc ?m :machines (vec (filter #(machine? (lookup model %)) (:topology model))))
+      (assoc ?m :buffers  (vec (filter #(buffer?  (lookup model %)) (:topology model))))
+      (assoc ?m :clock 0.0)
+      (assoc ?m :blocked #{})
+      (assoc ?m :starved #{})
+      (assoc ?m :jobmix ; set jobtype :w values, which may be differ stochastically for each simulation
+             (reduce (fn [jmix jt-key] 
+                       (assoc jmix jt-key
+                              (assoc (jt-key jmix)
+                                     :w
+                                     (reduce-kv (fn [m k v] 
+                                                  (assoc m k (if (number? v) v (rand-range (:bounds v)))))
+                                                (:w (jt-key jmix))     ;init
+                                                (:w (jt-key jmix)))))) ;collection
+                     (:jobmix ?m) (keys (:jobmix ?m))))
+      (assoc-in ?m [:params :current-job] 0))))
 
-(def ^:dynamic *log* nil)
+(def ^:dynamic *log-for-compute* nil)
 (def ^:dynamic *model* nil)
 
 (defn log-form
@@ -649,16 +653,42 @@
       (update-in [:njobs] inc)))
 
 (defn log
-  "Collect data: (1) essential for calculating performance measures, (2) example SCADA."
+  "Add to the log-buffer. On a clock tick it will be cleaned and written to log."
+  [model log-map]
+  (update model :log-buf #(conj % log-map)))
+
+(defn clean-log-buf
+  "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
+   Such msgs are superfluous if they happen at the same time."
+  [buf]
+  #_(let [clk (-> buf first :clk)] ; POD use tousannis code
+    (when (some #(not (== clk (:clk %))) buf)
+      (throw (ex-info "Log buffer inconsistent" {:log-buf buf}))))
+  (let [rem-fn (fn [acts ms log]
+                 (reduce
+                  (fn [log m]
+                    (reduce (fn [log act] (remove #(and (= (:m %) m) (= (:act %) act)) log))
+                            log acts))
+                  log ms))
+        bms (map :m (filter #(= (:act %) :bl) buf))
+        sms (map :m (filter #(= (:act %) :st) buf))]
+    (as-> buf ?log
+      (if-let [bm (map :m (filter (fn [msg] (and (= (:act msg) :ub)
+                                                 (some #(= (:m msg) %) bms)))
+                                  ?log))]
+        (rem-fn [:bl :ub] bm ?log)
+        ?log)
+      (if-let [sm (map :m (filter (fn [msg] (and (= (:act msg) :us)
+                                                 (some #(= (:m msg) %) sms)))
+                                  ?log))]
+        (rem-fn [:st :us] sm ?log)
+        ?log))))
+
+(defn add-compute-log!
+  "Collect data essential for calculating performance measures."
   [log-map]
-  (let [scada @+log-scada+]
-    (when (and (:log? scada)
-               (> (:max scada) (:cnt scada))
-               (> (:clk log-map) @+warm-up-time+))
-      (swap! +log-scada+ #(update % :cnt inc))
-      (println log-map)))
   (when (> (:clk log-map) @+warm-up-time+)
-    (swap! *log*
+    (swap! *log-for-compute*
            #(case (:act log-map)
               :bj (buf+    % log-map)
               :sm (buf-    % log-map)
@@ -667,7 +697,28 @@
               :ub (block-  % log-map)
               :st (starve+ % log-map)
               :us (starve- % log-map)
-              :aj @*log*))))
+              :aj @*log-for-compute*))))
+
+(defn push-log
+  "Clean up the :log-buf and record (add-compute-log!) all msgs accumulated in it
+   since the last clock tick. The :log-buf has msgs from the next clock tick,
+   so you have to sort them and only push the old ones."
+  [model up-to-clk]
+  (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
+               :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
+        clean-buf (clean-log-buf (:now parts))
+        cnt (atom 0)]
+    (when (> up-to-clk @+warm-up-time+)
+      (doall (map add-compute-log! clean-buf)))
+    (when (and (-> model :report :log?)
+               (not-empty (:now parts))
+               (> (-> model :report :max-lines) (-> model :report :line-cnt))
+               (> up-to-clk @+warm-up-time+))
+      (reset! cnt (count clean-buf))
+      (doall (map println clean-buf)))
+    (-> model
+        (assoc :log-buf (vec (:later parts)))
+        (update-in [:report :line-cnt] #(+ % @cnt)))))
 
 (defn analyze-results [log model]
   "Read the w-<date> output file and compute results."
@@ -681,7 +732,6 @@
   "Run one or more simulations."
   [model & {:keys [out-stream] :or {out-stream *out*}}]
   (reset! +kill-all+ false)
-  (swap! +log-scada+ #(assoc % :cnt 0))
   (binding [*out* out-stream]
     (let [sims 
           (map
@@ -692,18 +742,21 @@
                      time-end (:run-to-time (:params model))]
                  (as-> model ?m
                    (preprocess-model ?m)
-                   (binding [*log* (atom (log-form ?m))] ; create *log*. Return model. 
+                   (binding [*log-for-compute* (atom (log-form ?m))] ; create a log for computations.
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
-                         (let [model (advance-clock model (:time (first actions)))]
-                           (if (or (and (:run-to-job (:params model))
-                                        (<= (:current-job (:params model)) job-end))
-                                   (and (:run-to-time (:params model))
-                                        (<= (:clock model) time-end)))
-                             (recur (run-actions model actions))
-                             (assoc-in model [:params :status] :normal-end)))
+                         (as-> model ?m1
+                           (push-log ?m1 (:time (first actions)))
+                           (advance-clock ?m1 (:time (first actions)))
+                           (if (or (and (:run-to-job (:params ?m1))
+                                        (<= (:current-job (:params ?m1)) job-end))
+                                   (and (:run-to-time (:params ?m1))
+                                        (<= (:clock ?m1) time-end)))
+                             (recur (run-actions ?m1 actions))
+                             (assoc-in ?m1 [:params :status] :normal-end)))
                          (assoc-in model [:params :status] :no-runables)))
-                     (-> (analyze-results @*log* ?m)
+                     (println @*log-for-compute*)
+                     (-> (analyze-results @*log-for-compute* ?m)
                          (assoc :process-id n)
                          (assoc :jobmix (:jobmix ?m))
                          (assoc :status (:status (:params ?m)))
@@ -714,20 +767,24 @@
         @(first sims)
         (doall (map (fn [sim] (pprint @sim out-stream)) sims))))))
 
-
-(def f0
+#_(def f0
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
      :b1 (map->Buffer {:N 3})
      :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
     :number-of-simulations 1
+    :report {:log? true :max-lines 1000}
     :topology [:m1 :b1 :m2]
     :entry-point :m1
-    :params {:warm-up-time 2000 :run-to-time 10000} ; Was 20000 on training.
+    :params {:warm-up-time 2000 :run-to-time 10000}
     :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.1}})}}))
 
-(def f1
+#_(defn runit []
+  (with-open [w (clojure.java.io/writer "/tmp/f0.clj")]
+    (main-loop f0 :out-stream w)))
+
+#_(def f1
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}}) 
@@ -750,7 +807,7 @@
                                           :m4 1.0,
                                           :m5 1.01}})}}))
 
-(def f2
+#_(def f2
     (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine :m1
@@ -769,12 +826,3 @@
                                       :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
              :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type :jobType2.
                                       :w {:m1 1.0, :m2 1.0, :m3 1.3, :m4 1.0, :m5 1.0}})}}))
-
-
-
-
-
-
-
-
-

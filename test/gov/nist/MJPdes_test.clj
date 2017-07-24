@@ -71,7 +71,7 @@
 
 (deftest job-tests
   (testing "whether job would end when expected given fixed up&down schedule"
-    (is (= 50.0 (d/job-requires tmodel tjob (d/lookup tmodel :m1))))
+    (is (== 50.0 (d/job-requires tmodel tjob (d/lookup tmodel :m1))))
     (is (= [52.89181885143091 [:down 63.65613563175827]]
            (d/job-updates! tmodel tjob (d/lookup tmodel :m1))))
     (is (= [53.982196880676725 [:down 63.65613563175827]]
@@ -159,11 +159,11 @@
 
 (deftest log-testing-1
   (testing "whether job would end when expected given fixed up&down schedule"
-    (is (= 0.4 (:m1 (:blocked (test-bl-log)))))))
+    (is (== 0.4 (:m1 (:blocked (test-bl-log)))))))
 
 (deftest log-testing-2
   (testing "whether job would end when expected given fixed up&down schedule"
-    (is (= 0.4 (:m1 (:starved (test-sl-log)))))))
+    (is (== 0.4 (:m1 (:starved (test-sl-log)))))))
 
 
 (defn test-efficient
