@@ -50,7 +50,7 @@ when you'd like to collect all the details logged about jobs moving through the 
 ```bash
 cd MJPdes/target
 
-target> ./MJPdes -i ../resources/example.clj -o 
+target> ./MJPdes -i ../resources/example.clj -o /tmp/output.clj
 ````
 
 ### Typical output
