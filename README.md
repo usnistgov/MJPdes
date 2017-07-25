@@ -140,7 +140,7 @@ The ExpoMachine, Buffer and JobType forms need a bit more explanation:
 
 You can get detailed output from the program describing movement of jobs through the
 line. You do this using a :report key/value pair as shown below. This key/value pair
-should be placed at the same level of parenthesis nesting as the other application
+should be placed at the same level of parentheses nesting as the other application
 keys (i.e. placed with :topology, :job-mix etc.).
 
 ```clojure
@@ -149,7 +149,7 @@ keys (i.e. placed with :topology, :job-mix etc.).
 :max-lines specifies how many log entries to print. Printing starts after warm-up.
 (See :warm-up-time above.). :log? true just indicates that log information should be printed.
 
-Logging information uses short keys to minimize file size. (To do: Stop wasting characters
+Logging information uses short keys to minimize file size. (To do: Stop wasting file space
 printing 13 digits after the decimal point!) An example follows:
 
 ```clojure
@@ -180,7 +180,7 @@ The meaning of :act key values is as follows:
  * :ub - unblocked. The referenced machine can now move the part to the buffer.
 
 Note that the buffer referenced in :sm is the buffer from which work is pulled.
-Hence, in the second line above, :sm concerns starting work on machine :m2.
+Hence, in the second line above, :sm refers to work starting on machine :m2.
 Notice on the third line (:act :us) that :m2 was starving prior to starting job 908.
 
 The :ends key on messages of action type :aj is the time at which the job will finish
