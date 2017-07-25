@@ -96,7 +96,7 @@ An annotation of the example file follows:
 (map->Model  ; a function call to make a Model of the following map argument
  {:line ; a key introducing the line
   {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine m1
-   :b1 (map->Buffer {:N 3})                        ; the definiton of buffer b1
+   :b1 (map->Buffer {:N 3})                        ; the definiton of buffer b1
    :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
    :b2 (map->Buffer {:N 5})
    :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
