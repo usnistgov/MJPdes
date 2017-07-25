@@ -146,7 +146,7 @@ at the same level of parenthesis nesting as the other application keys (e.g. :to
 :report {:log? true :max-lines 1000}
 ```
 :max-lines specifies how many log entries to print. Printing starts after warm-up.
-(See :warm-up-time above.). :log? true just says to print log information. 
+(See :warm-up-time above.). :log? true just indicates that log information should be printed. 
 
 ## Limitations
 
