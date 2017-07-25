@@ -41,8 +41,17 @@ resources subdirectory.
 ```bash
 cd MJPdes/target
 
-target> ./MJPdes ../resources/example.clj
+target> ./MJPdes -i ../resources/example.clj
 ```
+You can also specify an output file to which results are written. This is especially useful
+when you'd like to collect all the details logged about jobs moving through the system.
+(See the discussion of the key :report option to learn how to get output this detailed output.)
+
+```bash
+cd MJPdes/target
+
+target> ./MJPdes -i ../resources/example.clj -o 
+````
 
 ### Typical output
 
@@ -125,6 +134,19 @@ The ExpoMachine, Buffer and JobType forms need a bit more explanation:
  * :portion determines the percentage of jobs that processed that will be of this type.
  * :w introduces a nested map of the work requirements at each machine. e.g. 2.0 units
    of work at machine :m2.
+
+## Detailed 'SCADA log' output with :report
+
+You can get detailed output from the program, describing movement of jobs through the
+line using a :report key/value pair as shown below. This key/value pair should be placed
+at the same level of parenthesis nesting as the other application keys (e.g. :topology,
+:job-mix etc.)
+
+```clojure
+:report {:log? true :max-lines 1000}
+```
+:max-lines specifies how many log entries to print. Printing starts after warm-up.
+(See :warm-up-time above.). :log? true just says to print log information. 
 
 ## Limitations
 
