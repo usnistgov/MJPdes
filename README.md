@@ -45,7 +45,8 @@ target> ./MJPdes -i ../resources/example.clj
 ```
 You can also specify an output file to which results are written. This is especially useful
 when you'd like to collect all the details logged about jobs moving through the system.
-(See the discussion of the key :report option to learn how to get output this detailed output.)
+(See the discussion below regarding use of the key/value pair for the :report option
+to learn how to get this detailed output.)
 
 ```bash
 cd MJPdes/target
