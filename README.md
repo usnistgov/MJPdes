@@ -19,7 +19,8 @@ The program reports:
  * Throughput
  * The bottleneck machine
  * Observed residence time
- * Average buffer occupancy 
+ * Average buffer occupancy
+ * A 'SCADA log' of events that occurred
 
 ## References
 
