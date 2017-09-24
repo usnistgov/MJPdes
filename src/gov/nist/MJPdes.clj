@@ -1,6 +1,7 @@
 (ns gov.nist.MJPdes
-  (:require [medley.core :refer (abs)]
-            [incanter.stats :as s :refer (sample-exp)]
+  "Multi-job production (mixed-model production) discrete event simulation."
+  {:author "Peter Denno"}
+  (:require [incanter.stats :as s :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
             [clojure.edn :as edn]))
 
@@ -498,7 +499,7 @@
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0))))
 
-(def ^:dynamic *log-for-compute* nil)
+(def ^:dynamic *log-for-compute* "Collects essential data for steady-state calculations." nil)
 (def ^:dynamic *model* nil)
 
 (defn log-form
@@ -513,7 +514,7 @@
 
 (defn calc-basics
   "Produce a results form containing percent time blocked, and job residence time."
-  [log model]
+  [model log]
   (let [warm-up-time (:warm-up-time (:params model))
         run-time (- (:run-to-time (:params model)) warm-up-time)
         residence-sum (:residence-sum log)
@@ -547,10 +548,10 @@
                 (zipmap (:machines model)
                         (map (fn [i]
                                (cond
-                                 (= i 1) (abs (- (bl 1) (st 2)))
-                                 (= i mcnt) (abs (- (bl (dec mcnt)) (st mcnt)))
-                                 :else   (+ (abs (- (bl (dec i)) (st i)))
-                                            (abs (- (bl i) (st (inc i)))))))
+                                 (= i 1) (Math/abs (- (bl 1) (st 2)))
+                                 (= i mcnt) (Math/abs (- (bl (dec mcnt)) (st mcnt)))
+                                 :else   (+ (Math/abs (- (bl (dec i)) (st i)))
+                                            (Math/abs (- (bl i) (st (inc i)))))))
                              (range 1 (inc mcnt))))]
             ;(println ";severity = " severity)
             (let [max-val (apply max (vals severity))]
@@ -661,7 +662,7 @@
   "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
    Such msgs are superfluous if they happen at the same time."
   [buf]
-  #_(let [clk (-> buf first :clk)] ; POD use tousannis code
+ (let [clk (-> buf first :clk)] ; POD use tousannis code
     (when (some #(not (== clk (:clk %))) buf)
       (throw (ex-info "Log buffer inconsistent" {:log-buf buf}))))
   (let [rem-fn (fn [acts ms log]
@@ -670,8 +671,8 @@
                     (reduce (fn [log act] (remove #(and (= (:m %) m) (= (:act %) act)) log))
                             log acts))
                   log ms))
-        bms (map :m (filter #(= (:act %) :bl) buf))
-        sms (map :m (filter #(= (:act %) :st) buf))]
+        bms (distinct (map :m (filter #(= (:act %) :bl) buf)))
+        sms (distinct (map :m (filter #(= (:act %) :st) buf)))]
     (as-> buf ?log
       (if-let [bm (map :m (filter (fn [msg] (and (= (:act msg) :ub)
                                                  (some #(= (:m msg) %) bms)))
@@ -720,9 +721,9 @@
         (assoc :log-buf (vec (:later parts)))
         (update-in [:report :line-cnt] #(+ % @cnt)))))
 
-(defn analyze-results [log model]
+(defn analyze-results [model log]
   "Read the w-<date> output file and compute results."
-    (as-> (calc-basics log model) ?res
+    (as-> (calc-basics model log) ?res
       (calc-bneck ?res model)
       #_(calc-residence-time ?res model)))
 
@@ -746,7 +747,7 @@
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
                          (as-> model ?m1
-                           (push-log ?m1 (:time (first actions)))
+                           (push-log      ?m1 (:time (first actions)))
                            (advance-clock ?m1 (:time (first actions)))
                            (if (or (and (:run-to-job (:params ?m1))
                                         (<= (:current-job (:params ?m1)) job-end))
@@ -755,8 +756,8 @@
                              (recur (run-actions ?m1 actions))
                              (assoc-in ?m1 [:params :status] :normal-end)))
                          (assoc-in model [:params :status] :no-runables)))
-                     (println @*log-for-compute*)
-                     (-> (analyze-results @*log-for-compute* ?m)
+                     ;(println @*log-for-compute*)
+                     (-> (analyze-results ?m @*log-for-compute*)
                          (assoc :process-id n)
                          (assoc :jobmix (:jobmix ?m))
                          (assoc :status (:status (:params ?m)))
