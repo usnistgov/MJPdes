@@ -1,6 +1,19 @@
-;;; Various functions for studying output.
+(ns gov.nist.MJPdes.util.utils
+  (:require [clojure.pprint :refer (cl-format pprint pp)]))
 
-(ns gov.nist.MJPdes)
+;;;=== General =========================
+(defn ppp []
+  (binding [clojure.pprint/*print-right-margin* 140]
+    (pprint *1)))
+
+(defn ppprint [arg]
+  (binding [clojure.pprint/*print-right-margin* 140]
+    (pprint arg)))
+
+(defn break
+  ([] (throw (ex-info "Break!" {})))
+  ([text] (throw (ex-info text {})))
+  ([text args] (throw (ex-info text args))))
 
 (defn mean
   [v]
@@ -15,7 +28,7 @@
                         (* dif dif)))
                     v)))))
 
-(defn analyze-results [filename]
+#_(defn analyze-results [filename]
   "Read an output file and perform various calculations."
   (with-open [in (java.io.PushbackReader. (clojure.java.io/reader filename))]
     (let [results (loop [mp (edn/read {:eof :eof} in)
@@ -31,7 +44,4 @@
                       :mean (mean starve)
                       :variance (variance starve)
                       :values starve}}))))
-      
-      
-
 

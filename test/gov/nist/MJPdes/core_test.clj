@@ -1,5 +1,5 @@
-(ns gov.nist.MJPdes-test
-  "Tests for MJPdes.clj"
+(ns gov.nist.MJPdes.core-test
+  "Tests for MJPdes/core.clj"
   {:author "Peter Denno"}
   (:require [clojure.test :refer :all]
             [gov.nist.MJPdes :refer :all :as mjp]

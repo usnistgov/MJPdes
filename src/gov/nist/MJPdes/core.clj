@@ -1,9 +1,10 @@
-(ns gov.nist.MJPdes
+(ns gov.nist.MJPdes.core
   "Multi-job production (mixed-model production) discrete event simulation."
   {:author "Peter Denno"}
   (:require [incanter.stats :as s :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
-            [clojure.edn :as edn]))
+            [clojure.edn :as edn]
+            [gov.nist.MJPdes.util.utils :refer :all]))
 
 ;;; Purpose: Implements a discrete event simulation engine for multi-job production.
 
@@ -106,7 +107,7 @@
   "Total time that job j requires on a machine m, (w_{ij}/W_i)"
   [model j m]
   (let [W (or (:W m) 1.0)
-        w (get (:w (get (:jobmix model) (:type j))) (:name m))] ; POD -> 
+        w (get (:w (get (:jobmix model) (:type j))) (:name m))] 
     (/ w W)))
 
 (defn catch-up-machine!
@@ -763,10 +764,10 @@
                          (assoc :status (:status (:params ?m)))
                          (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))))
            (range (or (:number-of-simulations model) 1)))]
-      (if (or (not (:number-of-simulations model))
-              (= 1 (:number-of-simulations model)))
-        @(first sims)
-        (doall (map (fn [sim] (pprint @sim out-stream)) sims))))))
+      (if (or (not  (:number-of-simulations model))
+              (== 1 (:number-of-simulations model)))
+        (-> sims first deref (dissoc :jobmix) pprint)
+        (doall (map (fn [sim] (pprint (dissoc @sim :jobmix) out-stream)) sims))))))
 
 (def f0-ib
   (map->Model
@@ -782,7 +783,7 @@
     :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 0.8}})}}))
 
 
-#_(def f0
+(def f0
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
