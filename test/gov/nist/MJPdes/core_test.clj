@@ -2,12 +2,14 @@
   "Tests for MJPdes/core.clj"
   {:author "Peter Denno"}
   (:require [clojure.test :refer :all]
-            [gov.nist.MJPdes :refer :all :as mjp]
+            [clojure.spec.test.alpha :as stest]
+            [gov.nist.MJPdes.core :refer :all :as mjp]
             [incanter.stats :as s]
             [clojure.edn :as edn]
             [clojure.pprint :refer (cl-format pprint)]))
 
-;;; This is out of date, maybe not hopelessly so but pretty close!
+;;; POD If you recompile core.clj after evaluating this, it won't happen. 
+(stest/instrument) ; Instrument everything
 
 (def ^:private diag (atom nil))
 
@@ -235,5 +237,93 @@
     (is (= (:bottleneck-machine (mjp/calc-bneck tp1 tf1)) :m4))
     (is (= (:bottleneck-machine (mjp/calc-bneck tp2 tf1)) :m2))))
 
+;;; m1 |---- 2 ----|---- 2 ----|---- 2 ----|BBBBB|---- 2 ----|
+;;; m2             |-------------- 5 ------------|                                        
 
-        
+(defn load-m1
+  "No warm-up. M2 takes almost the whole simulation to process a part."
+  []
+  (main-loop (map->Model
+              {:line 
+               {:m1 (map->ExpoMachine {:lambda 0.0000000001 :mu 100000.0 :W 1.0}) 
+                :b1 (map->Buffer {:N 1})
+                :m2 (map->ExpoMachine {:lambda 0.0000000001 :mu 100000.0 :W 1.0})}
+               :report {:log? true :max-lines 3000}
+               :topology [:m1 :b1 :m2]
+               :entry-point :m1
+               :params {:warm-up-time 0 :run-to-time 10}
+               :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 5.0}})}})))
+
+
+#_(def f0
+  (map->Model
+   {:line 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
+     :b1 (map->Buffer {:N 3})
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
+    :number-of-simulations 1
+    :report {:log? true :max-lines 1000}
+    :topology [:m1 :b1 :m2]
+    :entry-point :m1
+    :params {:warm-up-time 2000 :run-to-time 10000}
+    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.1}})}}))
+
+#_(def f0-ib
+  (map->Model
+   {:line 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
+     :b1 (map->Buffer {:N 2})
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
+    :number-of-simulations 1
+    :report {:log? true :max-lines 1000}
+    :topology [:m1 :b1 :m2]
+    :entry-point :m1
+    :params {:warm-up-time 2000 :run-to-time 10000}
+    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 0.8}})}}))
+
+#_(defn runit []
+  (with-open [w (clojure.java.io/writer "/tmp/f0.clj")]
+    (main-loop f0 :out-stream w)))
+
+#_(def f1
+  (map->Model
+   {:line 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}}) 
+     :b1 (map->Buffer {:N 3})
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
+     :b2 (map->Buffer {:N 5})
+     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
+     :b3 (map->Buffer {:N 1})
+     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
+     :b4 (map->Buffer {:N 1})
+     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})}
+    :number-of-simulations 10
+    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
+    :entry-point :m1 ; 
+    :params {:warm-up-time 2000 :run-to-time 20000}  
+    :jobmix {:jobType1 (map->JobType {:portion 1.0
+                                      :w {:m1 1.0,
+                                          :m2 1.0,
+                                          :m3 1.0,
+                                          :m4 1.0,
+                                          :m5 1.01}})}}))
+
+#_(def f2
+    (map->Model
+   {:line 
+    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine :m1
+     :b1 (map->Buffer {:N 3})                             ; the definition of buffer :b1
+     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
+     :b2 (map->Buffer {:N 5})
+     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
+     :b3 (map->Buffer {:N 1})
+     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.05 })
+     :b4 (map->Buffer {:N 1})
+     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })}
+    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5] ; the arrangement of the line
+    :entry-point :m1 ; where jobs start
+    :params {:warm-up-time 20000 :run-to-time 100000}  
+    :jobmix {:jobType1 (map->JobType {:portion 0.8 ; 80% of jobs will be of type :jobType1.
+                                      :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
+             :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type :jobType2.
+                                      :w {:m1 1.0, :m2 1.0, :m3 1.3, :m4 1.0, :m5 1.0}})}}))

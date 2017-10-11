@@ -1,7 +1,8 @@
 (ns gov.nist.MJPdes.core
   "Multi-job production (mixed-model production) discrete event simulation."
   {:author "Peter Denno"}
-  (:require [incanter.stats :as s :refer (sample-exp)]
+  (:require [clojure.spec.alpha :as spec]
+            [incanter.stats :as s :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
             [clojure.edn :as edn]
             [gov.nist.MJPdes.util.utils :refer :all]))
@@ -19,7 +20,7 @@
 ;;;   - fix blocked-requires-not-starved
 
 (def +default-jobs-move-to-down-machines+ false)
-(def +diag+ (atom nil))
+(def ^:private diag (atom nil))
 (def +warm-up-time+ (atom nil))
 ;(def +diag-expect-job+ (atom 0))
 
@@ -27,7 +28,7 @@
 
 (defrecord Machine [])
 (defrecord ReliableMachine [name status])  ; For specific tests. Assume W=1
-(defrecord ExpoMachine     [name status W mchain])
+(defrecord ExpoMachine     [name lambda mu status W mchain])
 
 (defn reliable? [m]
   (= ReliableMachine (type m)))
@@ -55,6 +56,48 @@
                 enters ; clock when entered on FIRST MACHINE
                 starts ; clock at which it will start CURRENT MACHINE
                 ends]) ; clock at which it will finish CURRENT MACHINE
+
+(spec/def ::ends float?)
+(spec/def ::starts float?)
+(spec/def ::enters float?)
+(spec/def ::id integer?)
+(spec/def ::type keyword?)
+(spec/def ::Job (spec/keys :req-un [::type ::id ::enters ::starts ::ends]))
+
+(spec/def ::pos    (spec/and number? pos?))
+(spec/def ::posint (spec/and integer? pos?))
+
+(spec/def ::W ::pos)
+(spec/def ::mu ::pos)
+(spec/def ::lambda ::pos)
+(spec/def ::mchain fn?)
+(spec/def ::status (spec/or :not-busy #(not %) :has-a-job ::Job))
+(spec/def ::ExpoMachine (spec/keys :req-un [::lambda ::mu ::W ::status ::mchain]))
+
+(spec/def ::N ::posint)
+(spec/def ::Buffer (spec/keys :req-un [::N]))
+
+(spec/def ::rmachine #(and (not (contains? % :lambda))
+                           (not (contains? % :mu))))
+
+(spec/def ::warm-up-time ::pos)
+(spec/def ::run-to-time ::pos)
+(spec/def ::params (spec/keys ::warm-up-time ::run-to-time))
+
+(spec/def ::w (spec/map-of keyword? ::pos))
+(spec/def ::portion ::pos)
+(spec/def ::JobType (spec/keys :req-un [::portion ::w])) 
+
+(spec/def ::max-lines ::posint)
+(spec/def ::log boolean?)
+(spec/def ::report (spec/keys :req-un [::log?] :req-opt [::max-lines]))
+
+;(spec/def ::number-of-simulations ::posint)
+(spec/def ::jobmix (spec/and (spec/map-of keyword? ::JobType) #(>= (count %) 1)))
+(spec/def ::machine (spec/or :rmachine ::rmachine :emachine ::ExpoMachine))
+(spec/def ::equipment (spec/or :machine ::machine :buffer ::Buffer))
+(spec/def ::line (spec/and (spec/map-of keyword? ::equipment) #(>= (count %) 3)))
+(spec/def ::Model (spec/keys :req-un [::line ::topology ::entry-point ::jobmix ::report ::params]))
 
 (defn lookup
   "Return the machine or buffer named NAME."
@@ -85,6 +128,7 @@
   (= :up (first (:future m))))
 
 (defn finished? [model m]
+  "Returns true if the machine is finished with what it is working on???"
   (let [status (:status m)]
     (or (not status)
         (>= (:clock model) (:ends status)))))
@@ -96,12 +140,12 @@
   "Returns true if buffer feeding machine m is empty." 
   (when (not= (:name m) (:entry-point model))
     (let [buf (lookup model (takes-from model (:name m)))]
-      (= (count (:holding buf)) 0))))
+      (== (count (:holding buf)) 0))))
 
 (defn buffer-full? [model m] 
   "Returns true if the buffer that machine m places completed work on is full."
   (when-let [buf (lookup model (buffers-to model (:name m)))] ; last machine cannot be blocked.
-    (= (count (:holding buf)) (:N buf))))
+    (== (count (:holding buf)) (:N buf))))
 
 (defn job-requires
   "Total time that job j requires on a machine m, (w_{ij}/W_i)"
@@ -300,11 +344,19 @@
         new-block  (filter #(and 
                              (buffer-full? model %)
                              (not (contains? old-block (:name %)))
-                             (occupied? %) 
-                             (finished? model %)) 
+                             (occupied? %))
                            (machines model))]
+    ;; This one is a bit odd. It is a msg issued when the part is being processed and the buffer is full.
+    ;; The time the blocking starts is when the machine finishes the job. 
+    ;; This is a "provisional" message in that it is issued earlier than :clk; between the time it is issued
+    ;; and the time this part finishes, the downstream machine might pull a job from the buffer. 
+    ;; (NB You can't count on that because that downstream machine could itself be blocked.)
+    ;; I do not allow blocking messages to advance the clock. I also don't flush the buffer on blocking
+    ;; messages. Therefore I can eliminate them if an unblock occurs before the time of the block.
+    ;; (I eliminate the unblock at that time too.)
     (when (not-empty new-block)
-      (vec (map (fn [mn] {:time clock :fn new-blocked :args (list (:name mn))}) new-block)))))
+      (vec (map (fn [mn] {:time (-> mn :status :ends)
+                          :fn new-blocked :args (list (:name mn))}) new-block)))))
 
 (defn new-unblocked?
   "Return record-actions to unlist certain machines as blocked."
@@ -397,7 +449,7 @@
 (defn run-action
   "Run a single action, returning the model."
   [model act]
-  ;(reset! +diag+ {:where 'run-action :act act})
+  ;(reset! diag {:where 'run-action :act act})
   (apply (partial (:fn act) model) (:args act)))
 
 (defn run-actions
@@ -406,7 +458,7 @@
   [model actions]
   (as-> model ?m
     (reduce (fn [m a] (run-action m a)) ?m actions)
-    #_(reset! +diag+ ?m)))
+    #_(reset! diag ?m)))
 
 (defn p-state-change
   "Calculate probability of a flip = 1- e^(-rate t) : exponential CDF."
@@ -440,11 +492,14 @@
             (do (swap! T-delta + t-delt)
                 (recur @up? @T))))))))
 
-;;; POD: try to do this with Clojure.spec.
-(defn check-model
-  "Reports errors and returns false if bugs in model."
+(defn spec-check-model
+  "Do clojure.spec-based testing of the model."
   [model]
-  model)
+  (if (spec/valid? ::Model model)
+    model
+    (throw
+     (ex-info "The model is not well-formed:"
+              {:reason (spec/explain ::Model model)}))))
 
 (defn rand-range
   [[lbound ubound]]
@@ -478,7 +533,6 @@
   (reset! +warm-up-time+ (:warm-up-time (:params model)))
   (let [jm2dm (or (:jm2dm model) +default-jobs-move-to-down-machines+)]
     (as-> model ?m
-      (check-model ?m)
       (assoc ?m :log-buf [])
       (update-in ?m [:report] #(if (empty? %) {:log? false :line-cnt 0 :max-lines 0} (assoc % :line-cnt 0)))
       (assoc ?m :jm2dm jm2dm)
@@ -498,7 +552,9 @@
                                                 (:w (jt-key jmix))     ;init
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
-      (assoc-in ?m [:params :current-job] 0))))
+      (assoc-in ?m [:params :current-job] 0)
+      (spec-check-model ?m))))
+
 
 (def ^:dynamic *log-for-compute* "Collects essential data for steady-state calculations." nil)
 (def ^:dynamic *model* nil)
@@ -663,9 +719,10 @@
   "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
    Such msgs are superfluous if they happen at the same time."
   [buf]
- (let [clk (-> buf first :clk)] ; POD use tousannis code
-    (when (some #(not (== clk (:clk %))) buf)
-      (throw (ex-info "Log buffer inconsistent" {:log-buf buf}))))
+  #_(when (and (some #(= (:act %) :bl) buf)
+             (not (some #(= (:act %) :bl) buf)))
+    (reset! diag buf)
+    (println buf))
   (let [rem-fn (fn [acts ms log]
                  (reduce
                   (fn [log m]
@@ -686,19 +743,29 @@
         (rem-fn [:st :us] sm ?log)
         ?log))))
 
+(spec/def ::act keyword?)
+(spec/def ::clk float?)
+(spec/def ::msg (spec/keys :req-un [::clk ::act]))
+ (spec/def ::buf (spec/coll-of ::msg))
+;;; Call it with a collection of messages all happening at the same time.  
+(spec/fdef clean-log-buf :args (spec/and (spec/cat :buf ::buf)
+                                         #(let [clk (-> % :args :buf first :clk)]
+                                            (every? (fn [msg] (== clk (:clk %)))
+                                                    (-> % :args :buf)))))
+
 (defn add-compute-log!
   "Collect data essential for calculating performance measures."
-  [log-map]
-  (when (> (:clk log-map) @+warm-up-time+)
+  [msg]
+  (when (> (:clk msg) @+warm-up-time+)
     (swap! *log-for-compute*
-           #(case (:act log-map)
-              :bj (buf+    % log-map)
-              :sm (buf-    % log-map)
-              :ej (end-job % log-map)
-              :bl (block+  % log-map) 
-              :ub (block-  % log-map)
-              :st (starve+ % log-map)
-              :us (starve- % log-map)
+           #(case (:act msg)
+              :bj (buf+    % msg)
+              :sm (buf-    % msg)
+              :ej (end-job % msg)
+              :bl (block+  % msg) 
+              :ub (block-  % msg)
+              :st (starve+ % msg)
+              :us (starve- % msg)
               :aj @*log-for-compute*))))
 
 (defn push-log
@@ -706,7 +773,9 @@
    since the last clock tick. The :log-buf has msgs from the next clock tick,
    so you have to sort them and only push the old ones."
   [model up-to-clk]
-  (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
+  (doall (map println (-> model :log-buf)))
+  (assoc model :log-buf [])
+  #_(let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
                :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
         clean-buf (clean-log-buf (:now parts))
         cnt (atom 0)]
@@ -717,7 +786,7 @@
                (> (-> model :report :max-lines) (-> model :report :line-cnt))
                (> up-to-clk @+warm-up-time+))
       (reset! cnt (count clean-buf))
-      (doall (map println clean-buf)))
+      (doall (map println clean-buf))) ; print, possibly to log file. 
     (-> model
         (assoc :log-buf (vec (:later parts)))
         (update-in [:report :line-cnt] #(+ % @cnt)))))
@@ -738,18 +807,18 @@
     (let [sims 
           (map
            (fn [n]
-             (future
+             (do ; future  <------------------------------------------ POD TEMPORARY
                (let [start (System/currentTimeMillis)
                      job-end  (:run-to-job  (:params model))
                      time-end (:run-to-time (:params model))]
                  (as-> model ?m
-                   (preprocess-model ?m)
+                   (reset! diag (preprocess-model ?m))
                    (binding [*log-for-compute* (atom (log-form ?m))] ; create a log for computations.
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
-                         (as-> model ?m1
-                           (push-log      ?m1 (:time (first actions)))
-                           (advance-clock ?m1 (:time (first actions)))
+                         (as-> model ?m1 ; blocking does not advance the clock 
+                           (push-log      ?m1 (:time (first actions #_(remove #(= :bl (:act %)) actions))))
+                           (advance-clock ?m1 (:time (first actions #_(remove #(= :bl (:act %)) actions))))
                            (if (or (and (:run-to-job (:params ?m1))
                                         (<= (:current-job (:params ?m1)) job-end))
                                    (and (:run-to-time (:params ?m1))
@@ -763,82 +832,29 @@
                          (assoc :jobmix (:jobmix ?m))
                          (assoc :status (:status (:params ?m)))
                          (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))))
-           (range (or (:number-of-simulations model) 1)))]
-      (if (or (not  (:number-of-simulations model))
-              (== 1 (:number-of-simulations model)))
-        (-> sims first deref (dissoc :jobmix) pprint)
-        (doall (map (fn [sim] (pprint (dissoc @sim :jobmix) out-stream)) sims))))))
-
-(def f0-ib
-  (map->Model
-   {:line 
-    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
-     :b1 (map->Buffer {:N 2})
-     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
-    :number-of-simulations 1
-    :report {:log? true :max-lines 1000}
-    :topology [:m1 :b1 :m2]
-    :entry-point :m1
-    :params {:warm-up-time 2000 :run-to-time 10000}
-    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 0.8}})}}))
+           (range (if (not (contains? model :number-of-simulations))
+                    1 ; Can't do this in preprocess-model. It won't be seen.
+                    (:number-of-simulations model))))]
+      (-> sims first deref (dissoc :jobmix) pprint)
+      (doall (map (fn [sim] (pprint (dissoc @sim :jobmix) out-stream)) sims)))))
 
 
-(def f0
+;;; This should block like crazy. It doesn't!
+(def f1
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
      :b1 (map->Buffer {:N 3})
      :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
     :number-of-simulations 1
-    :report {:log? true :max-lines 1000}
+    :report {:log? false #_:max-lines #_3000}
     :topology [:m1 :b1 :m2]
     :entry-point :m1
     :params {:warm-up-time 2000 :run-to-time 10000}
-    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.1}})}}))
+    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 3.1}})}}))
 
-#_(defn runit []
-  (with-open [w (clojure.java.io/writer "/tmp/f0.clj")]
-    (main-loop f0 :out-stream w)))
+(defn tryme []
+  (main-loop f1))
 
-#_(def f1
-  (map->Model
-   {:line 
-    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}}) 
-     :b1 (map->Buffer {:N 3})
-     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
-     :b2 (map->Buffer {:N 5})
-     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
-     :b3 (map->Buffer {:N 1})
-     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})
-     :b4 (map->Buffer {:N 1})
-     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W {:dist :uniform :bounds [0.8, 1.2]}})}
-    :number-of-simulations 10
-    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5]
-    :entry-point :m1 ; 
-    :params {:warm-up-time 2000 :run-to-time 20000}  
-    :jobmix {:jobType1 (map->JobType {:portion 1.0
-                                      :w {:m1 1.0,
-                                          :m2 1.0,
-                                          :m3 1.0,
-                                          :m4 1.0,
-                                          :m5 1.01}})}}))
 
-#_(def f2
-    (map->Model
-   {:line 
-    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 }) ; the definition of machine :m1
-     :b1 (map->Buffer {:N 3})                             ; the definition of buffer :b1
-     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0 })
-     :b2 (map->Buffer {:N 5})
-     :m3 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.1 })
-     :b3 (map->Buffer {:N 1})
-     :m4 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.05 })
-     :b4 (map->Buffer {:N 1})
-     :m5 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })}
-    :topology [:m1 :b1 :m2 :b2 :m3 :b3 :m4 :b4 :m5] ; the arrangement of the line
-    :entry-point :m1 ; where jobs start
-    :params {:warm-up-time 20000 :run-to-time 100000}  
-    :jobmix {:jobType1 (map->JobType {:portion 0.8 ; 80% of jobs will be of type :jobType1.
-                                      :w {:m1 1.0, :m2 1.0, :m3 1.0, :m4 1.0, :m5 1.0}})
-             :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type :jobType2.
-                                      :w {:m1 1.0, :m2 1.0, :m3 1.3, :m4 1.0, :m5 1.0}})}}))
+  
