@@ -239,20 +239,47 @@
 
 ;;; m1 |---- 2 ----|---- 2 ----|---- 2 ----|BBBBB|---- 2 ----|
 ;;; m2             |-------------- 5 ------------|                                        
-
 (defn load-m1
   "No warm-up. M2 takes almost the whole simulation to process a part."
   []
   (main-loop (map->Model
-              {:line 
-               {:m1 (map->ExpoMachine {:lambda 0.0000000001 :mu 100000.0 :W 1.0}) 
+              {:line ; POD if you go really crazy with lambda and mu it will hang. Not investigated!
+               {:m1 (map->ExpoMachine {:lambda 0.0001 :mu 100.0 :W 1.0}) 
                 :b1 (map->Buffer {:N 1})
-                :m2 (map->ExpoMachine {:lambda 0.0000000001 :mu 100000.0 :W 1.0})}
-               :report {:log? true :max-lines 3000}
+                :m2 (map->ExpoMachine {:lambda 0.0001 :mu 100.0 :W 1.0})}
+               :report {:log? true :max-lines 3000 :diag-log-buf? true}
+               :number-of-simulations 1
                :topology [:m1 :b1 :m2]
                :entry-point :m1
                :params {:warm-up-time 0 :run-to-time 10}
                :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 5.0}})}})))
+
+;;; Note I haven't finished this test, of course. :diag-log-buf? isn't working. 
+
+;;; POD I think that there still may be a bug with 'confused' log data.
+;;; See the text around new-blocked? I think there is a situation that could be
+;;; tested with something like "load-m1" above where block/unblock messages will be 
+;;; processed in the wrong order. 
+
+#{{:act :aj, :j 1, :jt :jobType1, :ends 2.0, :clk 0.0}
+  {:act :st, :m :m2, :clk 0.0}
+  {:act :bj, :bf :b1, :j 1, :n 0, :clk 2.0}
+  {:act :aj, :j 2, :jt :jobType1, :ends 4.0, :clk 2.0}
+  {:act :sm, :bf :b1, :j 1, :n 1, :clk 2.0}
+  {:act :us, :m :m2, :clk 2.0}
+  {:act :bj, :bf :b1, :j 2, :n 0, :clk 4.0}
+  {:act :aj, :j 3, :jt :jobType1, :ends 6.0, :clk 4.0}
+  {:act :bl, :m :m1, :clk 6.0}
+  {:act :ej, :m :m2, :j 1, :ent 0.0, :clk 7.0}
+  {:act :sm, :bf :b1, :j 2, :n 1, :clk 7.0}
+  {:act :bj, :bf :b1, :j 3, :n 0, :clk 7.0}
+  {:act :ub, :m :m1, :clk 7.0}
+  {:act :aj, :j 4, :jt :jobType1, :ends 9.0, :clk 7.0}
+  {:act :bl, :m :m1, :clk 9.0}}
+
+
+:loaded-it-all
+
 
 
 #_(def f0

@@ -534,6 +534,7 @@
   (let [jm2dm (or (:jm2dm model) +default-jobs-move-to-down-machines+)]
     (as-> model ?m
       (assoc ?m :log-buf [])
+      (assoc ?m :diag-log-buf [])
       (update-in ?m [:report] #(if (empty? %) {:log? false :line-cnt 0 :max-lines 0} (assoc % :line-cnt 0)))
       (assoc ?m :jm2dm jm2dm)
       (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
@@ -553,7 +554,7 @@
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0)
-      (spec-check-model ?m))))
+      #_(spec-check-model ?m))))
 
 
 (def ^:dynamic *log-for-compute* "Collects essential data for steady-state calculations." nil)
@@ -719,10 +720,6 @@
   "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
    Such msgs are superfluous if they happen at the same time."
   [buf]
-  #_(when (and (some #(= (:act %) :bl) buf)
-             (not (some #(= (:act %) :bl) buf)))
-    (reset! diag buf)
-    (println buf))
   (let [rem-fn (fn [acts ms log]
                  (reduce
                   (fn [log m]
@@ -768,34 +765,55 @@
               :us (starve- % msg)
               :aj @*log-for-compute*))))
 
+(defn print-now?
+  "Returns true if it is time to add to the log."
+  [model parts up-to-clk]
+  (and (-> model :report :log?)
+       (not-empty (:now parts))
+       (> (-> model :report :max-lines) (-> model :report :line-cnt))
+       (> up-to-clk @+warm-up-time+)))
+
 (defn push-log
   "Clean up the :log-buf and record (add-compute-log!) all msgs accumulated in it
    since the last clock tick. The :log-buf has msgs from the next clock tick,
    so you have to sort them and only push the old ones."
   [model up-to-clk]
-  (doall (map println (-> model :log-buf)))
-  (assoc model :log-buf [])
-  #_(let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
+  ;(doall (map println (-> model :log-buf)))
+  ;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf. 
+  (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
                :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
         clean-buf (clean-log-buf (:now parts))
         cnt (atom 0)]
     (when (> up-to-clk @+warm-up-time+)
       (doall (map add-compute-log! clean-buf)))
-    (when (and (-> model :report :log?)
-               (not-empty (:now parts))
-               (> (-> model :report :max-lines) (-> model :report :line-cnt))
-               (> up-to-clk @+warm-up-time+))
+    (when (print-now? model parts up-to-clk)
       (reset! cnt (count clean-buf))
-      (doall (map println clean-buf))) ; print, possibly to log file. 
-    (-> model
-        (assoc :log-buf (vec (:later parts)))
-        (update-in [:report :line-cnt] #(+ % @cnt)))))
+      (doall (map println clean-buf))) ; print, possibly to log file.
+    (as-> model ?m
+      (if (and (-> model :report :diag-log-buf?)
+               (print-now? model parts up-to-clk))
+        (update-in ?m [:diag-log-buf] #(into % clean-buf))
+        ?m)
+      (assoc ?m :log-buf (vec (:later parts)))
+      (update-in ?m [:report :line-cnt] #(+ % @cnt)))))
 
 (defn analyze-results [model log]
   "Read the w-<date> output file and compute results."
     (as-> (calc-basics model log) ?res
       (calc-bneck ?res model)
       #_(calc-residence-time ?res model)))
+
+(defn postprocess-model
+  "Create a results object."
+  [model n start]
+  (as-> (analyze-results model @*log-for-compute*) ?r
+    (assoc ?r :process-id n)
+    (if (-> model :report :diag-log-buf?)
+      (assoc ?r :diag-log-buf (:diag-log-buf model))
+      ?r)
+    (assoc ?r :jobmix (:jobmix model))
+    (assoc ?r :status (:status (:params model)))
+    (assoc ?r :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))
 
 (def +kill-all+ (atom false))
 
@@ -807,18 +825,18 @@
     (let [sims 
           (map
            (fn [n]
-             (do ; future  <------------------------------------------ POD TEMPORARY
+             (future 
                (let [start (System/currentTimeMillis)
                      job-end  (:run-to-job  (:params model))
                      time-end (:run-to-time (:params model))]
                  (as-> model ?m
-                   (reset! diag (preprocess-model ?m))
+                   (preprocess-model ?m)
                    (binding [*log-for-compute* (atom (log-form ?m))] ; create a log for computations.
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
                          (as-> model ?m1 ; blocking does not advance the clock 
-                           (push-log      ?m1 (:time (first actions #_(remove #(= :bl (:act %)) actions))))
-                           (advance-clock ?m1 (:time (first actions #_(remove #(= :bl (:act %)) actions))))
+                           (push-log      ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
+                           (advance-clock ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
                            (if (or (and (:run-to-job (:params ?m1))
                                         (<= (:current-job (:params ?m1)) job-end))
                                    (and (:run-to-time (:params ?m1))
@@ -826,17 +844,14 @@
                              (recur (run-actions ?m1 actions))
                              (assoc-in ?m1 [:params :status] :normal-end)))
                          (assoc-in model [:params :status] :no-runables)))
-                     ;(println @*log-for-compute*)
-                     (-> (analyze-results ?m @*log-for-compute*)
-                         (assoc :process-id n)
-                         (assoc :jobmix (:jobmix ?m))
-                         (assoc :status (:status (:params ?m)))
-                         (assoc :runtime (/ (- (System/currentTimeMillis) start) 1000.0))))))))
-           (range (if (not (contains? model :number-of-simulations))
-                    1 ; Can't do this in preprocess-model. It won't be seen.
-                    (:number-of-simulations model))))]
-      (-> sims first deref (dissoc :jobmix) pprint)
-      (doall (map (fn [sim] (pprint (dissoc @sim :jobmix) out-stream)) sims)))))
+                     ;;(println @*log-for-compute*)
+                     (postprocess-model ?m n start)))))) ; Returns a result object
+           (range (or (:number-of-simulations model) 1)))]
+      (if (or (not (contains? model :number-of-simulations))
+              (== 1 (:number-of-simulations model)))
+        (do (-> sims first deref (dissoc :jobmix) pprint)
+            (-> sims first deref))
+        (doall (map (fn [sim] (pprint (dissoc @sim :jobmix) out-stream)) sims))))))
 
 
 ;;; This should block like crazy. It doesn't!
