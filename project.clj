@@ -7,6 +7,6 @@
   :plugins [[lein-bin "0.3.4"]
             [lein-cljfmt "0.5.3"]]
   :dependencies [[org.clojure/clojure        "1.9.0-beta2"]
-                 [incanter/incanter-core     "1.9.1"]]
+                 [incanter/incanter-core     "1.5.7"]]
   :bin {:name "MJPdes" :bootclasspath true}
   :main gov.nist.MJPdes.main)
