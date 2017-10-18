@@ -45,3 +45,57 @@
                       :variance (variance starve)
                       :values starve}}))))
 
+(defn lookup
+  "Return the machine or buffer named NAME."
+  [model name]
+  (get (:line model) name))
+
+(defn buffers-to
+  "Return the name of the buffer that the named machine buffers to.
+   (Returns the thing after the argument.)"
+  [model m-name]
+  (let [^clojure.lang.PersistentVector top (:topology model)]
+    (when-let [pos (.indexOf top m-name)]
+      (when (< pos (dec (count top)))
+        (nth top (inc pos))))))
+
+(defn takes-from
+  "Return the buffer that the named machine takes work from."
+  [model m-name]
+  (let [^clojure.lang.PersistentVector top (:topology model)]
+    (when-let [pos (.indexOf top m-name)]
+      (when (> pos 0)
+        (nth top (dec pos))))))
+
+(defn up? [m]
+  (= :down (first (:future m))))
+
+(defn down? [m]
+  (= :up (first (:future m))))
+
+(defn finished? [model m]
+  "Returns true if the machine is finished with what it is working on???"
+  (let [status (:status m)]
+    (or (not status)
+        (>= (:clock model) (:ends status)))))
+
+(defn occupied? [m]
+  (:status m))
+
+(defn feed-buffer-empty? [model m] 
+  "Returns true if buffer feeding machine m is empty." 
+  (when (not= (:name m) (:entry-point model))
+    (let [buf (lookup model (takes-from model (:name m)))]
+      (== (count (:holding buf)) 0))))
+
+(defn buffer-full? [model m] 
+  "Returns true if the buffer that machine m places completed work on is full."
+  (when-let [buf (lookup model (buffers-to model (:name m)))] ; last machine cannot be blocked.
+    (== (count (:holding buf)) (:N buf))))
+
+(defn job-requires
+  "Total time that job j requires on a machine m, (w_{ij}/W_i)"
+  [model j m]
+  (let [W (or (:W m) 1.0)
+        w (get (:w (get (:jobmix model) (:type j))) (:name m))] 
+    (/ w W)))

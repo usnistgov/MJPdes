@@ -3,7 +3,8 @@
   {:author "Peter Denno"}
   (:require [clojure.test :refer :all]
             [clojure.spec.test.alpha :as stest]
-            [gov.nist.MJPdes.core :refer :all :as mjp]
+            [gov.nist.MJPdes.util.log :as log]
+            [gov.nist.MJPdes.core :as mjp]
             [incanter.stats :as s]
             [clojure.edn :as edn]
             [clojure.pprint :refer (cl-format pprint)]))
@@ -86,28 +87,28 @@
 (defn test-bl-log
   "Write some block/unblock log to a file and make sure it adds up."
   []
-  (let [model (-> (mjp/map->Model
-                   {:line {:m1 (mjp/map->ExpoMachine {:name :m1 :W 1.0 :lambda 0.1 :mu 0.9})}
-                    :topology [:m1]
-                    :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}})
-                  mjp/preprocess-model)]
-    (binding [mjp/*log-for-compute* (atom (log-form model))] ; create a log for computations.
-      (-> model 
-          (mjp/log {:act :bl, :m :m1, :clk 0.5})
-          (mjp/log {:act :ub, :m :m1, :clk 0.5})
-          (mjp/log {:act :bl, :m :m1, :clk 0.5})
-          (mjp/log {:act :ub, :m :m1, :clk 0.5})
-          (mjp/push-log 0.5) ; The above is realistic and should be cleaned by mjp/clean-log-buf.
-          (mjp/log {:act :bl, :m :m1, :clk 1.0})
-          (mjp/push-log 1.0)
-          (mjp/log {:act :ub, :m :m1, :clk 2.0}) ; total block = 1
-          (mjp/push-log 2.0)
-          (mjp/log {:act :bl, :m :m1, :clk 3.0})
-          (mjp/push-log 3.0)
-          (mjp/log {:act :ub, :m :m1, :clk 4.0}) ; total block = 2
-          (mjp/push-log 4.0)
-          (mjp/push-log 5.0)                     ; block percent = 2/5
-          (mjp/calc-basics @mjp/*log-for-compute*)))))
+  (let [m (-> (mjp/map->Model
+               {:line {:m1 (mjp/map->ExpoMachine {:name :m1 :W 1.0 :lambda 0.1 :mu 0.9})}
+                :topology [:m1]
+                :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}})
+              mjp/preprocess-model)]
+    (binding [log/*log-steady* (atom (log/steady-form m))] ; create a log for computations.
+      (-> m 
+          (log/log {:act :bl, :m :m1, :clk 0.5})
+          (log/log {:act :ub, :m :m1, :clk 0.5})
+          (log/log {:act :bl, :m :m1, :clk 0.5})
+          (log/log {:act :ub, :m :m1, :clk 0.5})
+          (log/push-log 0.5) ; The above is realistic and should be cleaned by log/clean-log-buf.
+          (log/log {:act :bl, :m :m1, :clk 1.0})
+          (log/push-log 1.0)
+          (log/log {:act :ub, :m :m1, :clk 2.0}) ; total block = 1
+          (log/push-log 2.0)
+          (log/log {:act :bl, :m :m1, :clk 3.0})
+          (log/push-log 3.0)
+          (log/log {:act :ub, :m :m1, :clk 4.0}) ; total block = 2
+          (log/push-log 4.0)
+          (log/push-log 5.0)                     ; block percent = 2/5
+          (mjp/calc-basics @log/*log-steady*)))))
 
 (defn test-sl-log
   "Write some block/unblock log to a file and make sure it adds up."
@@ -117,23 +118,23 @@
                     :topology [:m1]
                     :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}})
                   mjp/preprocess-model)]
-    (binding [mjp/*log-for-compute* (atom (log-form model))] ; create a log for computations.
+    (binding [log/*log-steady* (atom (log/steady-form model))] ; create a log for computations.
       (-> model
-          (mjp/log {:act :st, :m :m1, :clk 0.5})
-          (mjp/log {:act :us, :m :m1, :clk 0.5})
-          (mjp/log {:act :st, :m :m1, :clk 0.5})
-          (mjp/log {:act :us, :m :m1, :clk 0.5})
-          (mjp/push-log 0.5) ; The above is realistic, but cleaned by mjp/clean-log-buf.
-          (mjp/log {:act :st, :m :m1, :clk 1.0})
-          (mjp/push-log 1.0)
-          (mjp/log {:act :us, :m :m1, :clk 2.0})
-          (mjp/push-log 2.0)
-          (mjp/log {:act :st, :m :m1, :clk 3.0})
-          (mjp/push-log 3.0)
-          (mjp/log {:act :us, :m :m1, :clk 4.0})
-          (mjp/push-log 4.0)
-          (mjp/push-log 5.0)
-          (mjp/calc-basics @mjp/*log-for-compute*)))))
+          (log/log {:act :st, :m :m1, :clk 0.5})
+          (log/log {:act :us, :m :m1, :clk 0.5})
+          (log/log {:act :st, :m :m1, :clk 0.5})
+          (log/log {:act :us, :m :m1, :clk 0.5})
+          (log/push-log 0.5) ; The above is realistic, but cleaned by log/clean-log-buf.
+          (log/log {:act :st, :m :m1, :clk 1.0})
+          (log/push-log 1.0)
+          (log/log {:act :us, :m :m1, :clk 2.0})
+          (log/push-log 2.0)
+          (log/log {:act :st, :m :m1, :clk 3.0})
+          (log/push-log 3.0)
+          (log/log {:act :us, :m :m1, :clk 4.0})
+          (log/push-log 4.0)
+          (log/push-log 5.0)
+          (mjp/calc-basics @log/*log-steady*)))))
 
 (deftest log-testing-1
   (testing "whether job would end when expected given fixed up&down schedule"
@@ -242,17 +243,17 @@
 (defn load-m1
   "No warm-up. M2 takes almost the whole simulation to process a part."
   []
-  (main-loop (map->Model
+  (mjp/main-loop (mjp/map->Model
               {:line ; POD if you go really crazy with lambda and mu it will hang. Not investigated!
-               {:m1 (map->ExpoMachine {:lambda 0.0001 :mu 100.0 :W 1.0}) 
-                :b1 (map->Buffer {:N 1})
-                :m2 (map->ExpoMachine {:lambda 0.0001 :mu 100.0 :W 1.0})}
+               {:m1 (mjp/map->ExpoMachine {:lambda 0.0001 :mu 100.0 :W 1.0}) 
+                :b1 (mjp/map->Buffer {:N 1})
+                :m2 (mjp/map->ExpoMachine {:lambda 0.0001 :mu 100.0 :W 1.0})}
                :report {:log? true :max-lines 3000 :diag-log-buf? true}
                :number-of-simulations 1
                :topology [:m1 :b1 :m2]
                :entry-point :m1
                :params {:warm-up-time 0 :run-to-time 10}
-               :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 5.0}})}})))
+               :jobmix {:jobType1 (mjp/map->JobType {:portion 1.0 :w {:m1 2.0, :m2 5.0}})}})))
 
 ;;; Note I haven't finished this test, of course. :diag-log-buf? isn't working. 
 
@@ -279,23 +280,8 @@
 
 
 :loaded-it-all
-
-
-
-#_(def f0
-  (map->Model
-   {:line 
-    {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
-     :b1 (map->Buffer {:N 3})
-     :m2 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0})}
-    :number-of-simulations 1
-    :report {:log? true :max-lines 1000}
-    :topology [:m1 :b1 :m2]
-    :entry-point :m1
-    :params {:warm-up-time 2000 :run-to-time 10000}
-    :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 1.0, :m2 1.1}})}}))
-
-#_(def f0-ib
+  
+(def f0
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
@@ -308,9 +294,9 @@
     :params {:warm-up-time 2000 :run-to-time 10000}
     :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 0.8}})}}))
 
-#_(defn runit []
+(defn runit []
   (with-open [w (clojure.java.io/writer "/tmp/f0.clj")]
-    (main-loop f0 :out-stream w)))
+    (mjp/main-loop f0 :out-stream w)))
 
 #_(def f1
   (map->Model

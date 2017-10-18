@@ -150,44 +150,25 @@ keys (i.e. placed with :topology, :job-mix etc.).
 :max-lines specifies how many log entries to print. Printing starts after warm-up.
 (See :warm-up-time above.). :log? true just indicates that log information should be printed.
 
-Logging information uses short keys to minimize file size. (To do: Stop wasting file space
-printing 13 digits after the decimal point!) An example follows:
+An example follows:
 
 ```clojure
-{:act :aj, :j 909, :jt :jobType1, :ends 2001.4107836841713, :clk 1999.2999689870003}
-{:act :sm, :bf :b1, :j 908, :n 1, :clk 1999.2999689870003}
-{:act :us, :m :m2, :clk 1999.2999689870003}
-{:act :ej, :m :m2, :j 908, :ent 1997.2999689870003, :clk 2000.0999689870002}
-{:act :st, :m :m2, :clk 2000.0999689870002}
-{:act :bj, :bf :b1, :j 909, :n 0, :clk 2001.4107836841713}
-{:act :aj, :j 910, :jt :jobType1, :ends 2003.4107836841713, :clk 2001.4107836841713}
-{:act :sm, :bf :b1, :j 909, :n 1, :clk 2001.4107836841713}
+{:clk 2358.3397 :act :m2-starved :m :m2}
+{:clk 2359.5397 :act :m1-move-off :m :m1 :bf :b1 :n 0 :j 1060}
+{:clk 2359.5397 :act :m2-unstarved :m :m2}
+{:clk 2359.5397 :act :m2-start-job :m :m2 :bf :b1 :n 1 :j 1060}
+{:clk 2359.5397 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2361.5397 :j 1061}
+{:clk 2360.3397 :act :m2-move-off :m :m2 :ent 2357.5397 :j 1060}
+{:clk 2360.3397 :act :m2-starved :m :m2}
+{:clk 2361.5397 :act :m2-start-job :m :m2 :bf :b1 :n 1 :j 1061}
+{:clk 2361.5397 :act :m2-unstarved :m :m2}
+{:clk 2361.5397 :act :m1-move-off :m :m1 :bf :b1 :n 0 :j 1061}
+{:clk 2361.5397 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2363.5397 :j 1062}
+{:clk 2362.3397 :act :m2-move-off :m :m2 :ent 2359.5397 :j 1061}
 ```
-The principal keys have the following meaning:
- * :act - an action. The meaning of the values is provided in the next paragraph.
- * :j - a job. The value following the key is the job's id.
- * :jt - a job type. 
- * :m - a machine. 
- * :bf - a buffer.
- * :clk - the time of occurrence of the :act. 
-
-The meaning of :act key values is as follows:
- * :aj - add job. The job enters the system at the first machine. 
- * :sm - start on machine
- * :us - 'unstarved' the machine referenced now has a part.
- * :ej - end job. The job exits the system.
- * :st - starved. The referenced machine is starved.
- * :bl - blocked. The referenced machine is blocked.
- * :ub - unblocked. The referenced machine can now move the part to the buffer.
-
-Note that the buffer referenced in :sm is the buffer from which work is pulled.
-Hence, in the second line above, :sm refers to work starting on machine :m2.
-Notice on the third line (:act :us) that :m2 was starving prior to starting job 908.
-
-The :ends key on messages of action type :aj is the time at which the job will finish
-on the first machine. This doesn't preclude it from being blocked. 
-The first line above shows a job that will end at 2001.4107836841713. You can
-see this job starting on the second machine (:act :sm) in the last log line above.
+Note that:
+ * :n is the occupancy of the buffer before the action (:act). 
+ * :ends is the time at which the job will end. 
 
 Messages regarding events that occur simultaneously are not necessarily in 
 the expected 'natural' order. However, log entries are always chronologically
