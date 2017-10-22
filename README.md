@@ -180,12 +180,12 @@ Note that:
 * :jt is job type.
 * :j is the job id. 
 * :mjpact is a shorthand classification of what is happening:
-..* :sm = start on machine
-..* :aj = add job (same as :sm but on entry machine).
-..* :bl = blocking
-..* :ub = unblocked
-..* :st = starving
-..* :us = unstarved
+ - :sm = start on machine
+ - :aj = add job (same as :sm but on entry machine).
+ - :bl = blocking
+ - :ub = unblocked
+ - :st = starving
+ - :us = unstarved
 
 ## Limitations
 
