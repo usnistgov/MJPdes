@@ -123,21 +123,21 @@ The details of these objects are as follows:
 ```clojure
 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })
 ```
- * :lambda is the breakdown rate.
- * :mu is the repair rate.
- * :W is the work capacity.
+* :lambda is the breakdown rate.
+* :mu is the repair rate.
+* :W is the work capacity.
 
 ```clojure
 (map->Buffer {:N 3})
 ```
- * :N is the size of the buffer.
+* :N is the size of the buffer.
 
 ```clojure
 (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
                :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})
 ```
- * :portion determines the percentage of jobs to be processed that will be of this type.
- * :w introduces a nested map of the work requirements at each machine. e.g. 2.0 units
+* :portion determines the percentage of jobs to be processed that will be of this type.
+* :w introduces a nested map of the work requirements at each machine. e.g. 2.0 units
    of work at machine :m2.
 
 ## Detailed 'SCADA log' output with :report
@@ -172,20 +172,20 @@ An example follows:
 {:clk 2002.2861 :act :m2-move-off :m :m2 :ent 1996.8512 :mjpact :ej :j 1599 :line 13}
 ```
 Note that:
- * :n is the occupancy of the buffer before the action (:act).
- * :ent is the time at which the job enters the system and starts work on the first machine.
- * :ends is the time at which the job will end.
- * :m is the machine involved (if any).
- * :bf is the buffer involved (if any).
- * :jt is job type.
- * :j is the job id. 
- * :mjpact is a shorthand classification of what is happening
-   ..* :sm = start on machine
-   ..* :aj = add job (same as :sm but on entry machine).
-   ..* :bl = blocking
-   ..* :ub = unblocked
-   ..* :st = starving
-   ..* :us = unstarved
+* :n is the occupancy of the buffer before the action (:act).
+* :ent is the time at which the job enters the system and starts work on the first machine.
+* :ends is the time at which the job will end.
+* :m is the machine involved (if any).
+* :bf is the buffer involved (if any).
+* :jt is job type.
+* :j is the job id. 
+* :mjpact is a shorthand classification of what is happening:
+..* :sm = start on machine
+..* :aj = add job (same as :sm but on entry machine).
+..* :bl = blocking
+..* :ub = unblocked
+..* :st = starving
+..* :us = unstarved
 
 ## Limitations
 
