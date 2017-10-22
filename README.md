@@ -179,7 +179,9 @@ Note that:
 * :bf is the buffer involved (if any).
 * :jt is job type.
 * :j is the job id. 
-* :mjpact is a shorthand classification of what is happening:
+* :mjpact is a shorthand classification of what is happening.
+
+The :mjpact values have the following meanings:
  - :sm = start on machine
  - :aj = add job (same as :sm but on entry machine).
  - :bl = blocking
