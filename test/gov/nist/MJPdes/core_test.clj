@@ -5,6 +5,7 @@
             [clojure.spec.test.alpha :as stest]
             [gov.nist.MJPdes.util.log :as log]
             [gov.nist.MJPdes.core :as mjp]
+            [gov.nist.MJPdes.util.utils :as util]
             [incanter.stats :as s]
             [clojure.edn :as edn]
             [clojure.pprint :refer (cl-format pprint)]))
@@ -68,9 +69,9 @@
                    :params {:current-job 0}
                    :jobmix {:jobType1 (mjp/map->JobType {:portion 1.0 :w {:m1 50.0}})}})
           tjob (-> (mjp/new-job tmodel) (assoc :starts 0))]
-      (is (== 50.0 (mjp/job-requires tmodel tjob (mjp/lookup tmodel :m1))))
+      (is (== 50.0 (util/job-requires tmodel tjob (util/lookup tmodel :m1))))
       (is (= [52.89181885143091  [:down 63.65613563175827]]
-             (mjp/job-updates! tmodel  tjob (mjp/lookup tmodel :m1))))
+             (mjp/job-updates! tmodel  tjob (util/lookup tmodel :m1))))
 
       (let [tmodel1 (mjp/map->Model
                      {:line 
@@ -80,7 +81,7 @@
                       :params {:current-job 0}
                       :jobmix {:jobType1 (mjp/map->JobType {:portion 1.0 :w {:m1 50.0}})}})]
         (is (= [53.982196880676725 [:down 63.65613563175827]]
-               (mjp/job-updates! tmodel1 tjob (mjp/lookup tmodel1 :m1))))))))
+               (mjp/job-updates! tmodel1 tjob (util/lookup tmodel1 :m1))))))))
 
 ;(== 53.982196880676725 (+ 52.89181885143091 1.0903780292458096)
 
@@ -281,7 +282,7 @@
 
 :loaded-it-all
   
-(def f0
+#_(def f0
   (map->Model
    {:line 
     {:m1 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.0}) 
@@ -294,7 +295,7 @@
     :params {:warm-up-time 2000 :run-to-time 10000}
     :jobmix {:jobType1 (map->JobType {:portion 1.0 :w {:m1 2.0, :m2 0.8}})}}))
 
-(defn runit []
+#_(defn runit []
   (with-open [w (clojure.java.io/writer "/tmp/f0.clj")]
     (mjp/main-loop f0 :out-stream w)))
 

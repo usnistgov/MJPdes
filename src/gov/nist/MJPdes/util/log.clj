@@ -3,7 +3,7 @@
   (:require
    [clojure.spec.alpha :as spec]
    [clojure.pprint :refer (cl-format pprint pp)]
-   [gov.nist.MJPdes.util.utils :as util]))
+   [gov.nist.MJPdes.util.utils :as util :refer (ppp ppprint)]))
 
 (def ^:dynamic *log-steady* "Collects essential data for steady-state calculations." nil)
 
@@ -36,25 +36,6 @@
         (rem-fn [:st :us] sm ?log)
         ?log))))
 
-;;; POD This will need some work as lines get more sophisticated. 
-(defn upstream?
-  "Returns true if equip1 is upstream of equip2"
-  [model equip1 equip2]
-  (let [top ^clojure.lang.PersistentVector (:topology model)]
-    (and (some #(= % equip1) top)
-         (some #(= % equip2) top)
-         (> (.indexOf top equip1)
-            (.indexOf top equip2)))))
-
-(defn upstream-msg?
-  "Returns true if msg1 refers to equipment upstream of msg2"
-  [model msg1 msg2]
-  (let [equip1 (or (:m msg1) (:bf msg1))
-        equip2 (or (:m msg2) (:bf msg2))]
-    (if (and equip1 equip2)
-      (upstream? model equip1 equip2)
-      false)))
-
 (spec/def ::act keyword?)
 (spec/def ::clk float?)
 (spec/def ::msg (spec/keys :req-un [::clk ::act]))
@@ -65,6 +46,34 @@
                                             (every? (fn [msg] (== clk (:clk %)))
                                                     (-> % :args :buf)))))
 
+;;; POD This will need some work as lines get more sophisticated. 
+(defn upstream?
+  "Returns true if equip1 is upstream of equip2"
+  [model equip1 equip2]
+  (let [top ^clojure.lang.PersistentVector (:topology model)]
+    (and (not= equip1 equip2)
+         (some #(= % equip1) top)
+         (some #(= % equip2) top)
+         (> (.indexOf top equip1)
+            (.indexOf top equip2)))))
+
+(defn msg-before?
+  "Returns true if msg1 should be reported before msg2.
+   Both are assumed to have the same :clk."
+  [model msg1 msg2]
+  (let [equip1 (or (:m msg1) (:bf msg1))
+        equip2 (or (:m msg2) (:bf msg2))
+        up? (and equip1 equip2 (upstream? model equip1 equip2))
+        act1 (:mjpact msg1)
+        act2 (:mjpact msg2)]
+    (cond up? true, 
+          (and (= equip1 equip2)
+               (= act1 :ub)
+               (or (= act2 :sm) (= act2 :aj) (= act2 :bj))) true,
+          (and (= equip1 equip2)
+               (= act1 :us)
+               (= act2 :sm)) true,
+          :else false)))
 
 (declare buf+ buf- end-job block+ block- starve+ starve-)
 (defn add-compute-log!
@@ -81,7 +90,7 @@
             :us (starve- % msg)
             :aj @*log-steady*)))
 
-(declare print-now? pretty-buf)
+(declare print-now? pretty-buf print-lines)
 (defn push-log
   "Clean up the :log-buf and record (add-compute-log!) all msgs accumulated in it
    since the last clock tick. The :log-buf has msgs from the next clock tick,
@@ -92,27 +101,43 @@
   (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
                :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
         clean-buf (clean-log-buf (:now parts))
-        cnt (atom 0)
         warm-up (-> model :params :warm-up-time)]
     (when (> up-to-clk warm-up)
       (doall (map #(when (> (:clk %) warm-up)
                      (add-compute-log! %))
                   clean-buf)))
-    (when (print-now? model parts up-to-clk)
-      (reset! cnt (count clean-buf))
-      (let [fmt (str "{:clk" (-> model :params :time-format) "~{ ~A~}}~%")]
-        (doall (map #(cl-format *out* fmt
-                                (:clk %)
-                                (-> (dissoc % :clk) vec flatten))
-                    (pretty-buf model clean-buf))))) ; print, possibly to log file.
     (as-> model ?m
-      (if (and (-> model :report :diag-log-buf?)
-               (print-now? model parts up-to-clk))
-        (update-in ?m [:diag-log-buf] #(into % clean-buf))
+      (if (print-now? model parts up-to-clk)
+        (print-lines ?m clean-buf)
         ?m)
-      (assoc ?m :log-buf (vec (:later parts)))
-      (update-in ?m [:report :line-cnt] #(+ % @cnt)))))
+      (assoc ?m :log-buf (vec (:later parts))))))
 
+(defn print-lines
+  "Actually print the lines, updating (-> model :report :line-cnt)."
+  [model clean-buf]
+  (let [fmt (str "{:clk" (-> model :params :time-format) "~{ ~A~}}~%")
+        buf (pretty-buf model clean-buf)
+        line-num (atom (-> model :report :line-cnt))]
+    (when (== 0 (-> model :report :line-cnt)) (println "["))
+    (run! (fn [line]
+            (cl-format *out* fmt
+                       (:clk line)
+                       (-> (dissoc line :clk)
+                           (assoc :line @line-num)
+                           vec
+                           flatten))
+            (swap! line-num inc))
+          buf)
+    (let [model (as-> model ?m
+                  ;; :diag-log-buf used in core.clj testing. 
+                  (if (-> ?m :report :diag-log-buf?)
+                    (update-in ?m [:diag-log-buf] #(into % buf))
+                    ?m)
+                  (update-in ?m [:report :line-cnt] #(+ % (count buf))))]
+      (when (>= (-> model :report :line-cnt)
+                (-> model :report :max-lines))
+        (println "]"))
+      model)))
 
 ;;;{:residence-sum 0.0,
 ;;; :njobs 0,
@@ -242,11 +267,12 @@
   [model msg]
   (let [m (implies-machine model msg)]
     (as-> msg ?msg
-        (assoc ?msg :m m)
-        (assoc ?msg :act (mjp2pretty-name ?msg)))))
+      (assoc ?msg :m m)
+      (assoc ?msg :mjpact (:act ?msg))
+      (assoc ?msg :act (mjp2pretty-name ?msg)))))
 
 (def msg-key-order "Order we want message keys to appear in printed logs"
-  [:clk :act :jt :m :bf :n :ent :ends :j])
+  [:clk :act :jt :m :bf :n :ent :ends :mjpact :j :line])
 
 (defn msg-key-compare
   "Return true if k1 is before k2 in the sort order msg-key-order."
@@ -263,6 +289,40 @@
   [model clean-buf]
   (->> clean-buf
        (map #(prettyfy-msg model %))
-       (sort #(upstream-msg? model %1 %2)) ; POD needs work
+       (sort #(msg-before? model %1 %2))
        (map  #(shorten-msg-floats model %))
        (map  #(into (sorted-map-by msg-key-compare) %))))
+
+(defn pretty-model
+  "Remove a few things from model to make it print cleaner."
+  [model]
+  (update-in model [:line]
+             (fn [line]
+               (reduce (fn [l equip-name]
+                         (update-in l [equip-name]
+                                    #(-> %
+                                         (dissoc :name)
+                                         (dissoc :status)
+                                         (dissoc :mchain)
+                                         (dissoc :holding))))
+                       line
+                       (keys line)))))
+
+(defn output-sims
+  "Print the simulation results to *out*. If there is just one sim, return it.
+   This is intended to be the return value of core/main-loop."
+  [model sims]
+  (doall (map deref sims))
+  (if (or (not (contains? model :number-of-simulations))
+          (== 1 (:number-of-simulations model)))
+    (do
+      (print "#_")
+      (-> sims first deref (dissoc :jobmix) pprint)
+      (-> sims first deref))
+    (map (fn [sim]
+           (print "#_")
+           (pprint (dissoc @sim :jobmix)))
+         sims)))
+
+
+

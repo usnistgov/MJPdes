@@ -5,7 +5,7 @@
             [incanter.stats :as s :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
             [clojure.edn :as edn]
-            [gov.nist.MJPdes.util.utils :as util]
+            [gov.nist.MJPdes.util.utils :as util :refer (ppprint ppp)]
             [gov.nist.MJPdes.util.log :as log]))
 
 ;;; Purpose: Implements a discrete event simulation engine for multi-job production.
@@ -508,7 +508,7 @@
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0)
-      #_(spec-check-model ?m))))
+      (spec-check-model ?m))))
 
 (defn calc-basics
   "Produce a results form containing percent time blocked, and job residence time."
@@ -620,7 +620,9 @@
   [model & {:keys [out-stream] :or {out-stream *out*}}]
   (reset! +kill-all+ false)
   (binding [*out* out-stream]
-    (let [sims 
+    (print "#_")
+    (pprint (log/pretty-model model))
+    (let [sims ; a seq of futures.
           (map
            (fn [n]
              (future
@@ -633,7 +635,7 @@
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
                          (as-> model ?m1 ; blocking does not advance the clock 
-                           (log/push-log      ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
+                           (log/push-log  ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
                            (advance-clock ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
                            (if (or (and (:run-to-job (:params ?m1))
                                         (<= (:current-job (:params ?m1)) job-end))
@@ -645,8 +647,4 @@
                      ;;(println @log/*log-steady*)
                      (postprocess-model ?m n start)))))) ; Returns a result object
            (range (or (:number-of-simulations model) 1)))]
-      (if (or (not (contains? model :number-of-simulations))
-              (== 1 (:number-of-simulations model)))
-        (do (-> sims first deref (dissoc :jobmix) pprint)
-            (-> sims first deref))
-        (doall (map (fn [sim] (pprint (dissoc @sim :jobmix) out-stream)) sims))))))
+      (log/output-sims model sims))))

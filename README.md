@@ -90,6 +90,8 @@ this pattern:
 {:akey "a value" :another-key {:key3 "a value in an nested map"}}
 ```
 
+A detailed description can be found [here](https://github.com/edn-format/edn).
+
 Comments in Clojure start with a semicolon. Commas are treated as whitespace. 
 
 An annotation of the example input file follows:
@@ -115,7 +117,8 @@ An annotation of the example input file follows:
                                     :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})}})
 ```
 
-The ExpoMachine, Buffer and JobType forms need a bit more explanation:
+The ExpoMachine, Buffer and JobType forms create objects of the type named.
+The details of these objects are as follows:
 
 ```clojure
 (map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 })
@@ -153,26 +156,36 @@ keys (i.e. placed with :topology, :job-mix etc.).
 An example follows:
 
 ```clojure
-{:clk 2358.3397 :act :m2-starved :m :m2}
-{:clk 2359.5397 :act :m1-move-off :m :m1 :bf :b1 :n 0 :j 1060}
-{:clk 2359.5397 :act :m2-unstarved :m :m2}
-{:clk 2359.5397 :act :m2-start-job :m :m2 :bf :b1 :n 1 :j 1060}
-{:clk 2359.5397 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2361.5397 :j 1061}
-{:clk 2360.3397 :act :m2-move-off :m :m2 :ent 2357.5397 :j 1060}
-{:clk 2360.3397 :act :m2-starved :m :m2}
-{:clk 2361.5397 :act :m2-start-job :m :m2 :bf :b1 :n 1 :j 1061}
-{:clk 2361.5397 :act :m2-unstarved :m :m2}
-{:clk 2361.5397 :act :m1-move-off :m :m1 :bf :b1 :n 0 :j 1061}
-{:clk 2361.5397 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2363.5397 :j 1062}
-{:clk 2362.3397 :act :m2-move-off :m :m2 :ent 2359.5397 :j 1061}
+{:clk 1999.8512 :act :m1-blocked :m :m1 :mjpact :bl :line 0}
+{:clk 2000.0861 :act :m2-move-off :m :m2 :ent 1994.8512 :mjpact :ej :j 1597 :line 1}
+{:clk 2000.0861 :act :m2-start-job :m :m2 :bf :b1 :n 3 :mjpact :sm :j 1598 :line 2}
+{:clk 2000.0861 :act :m1-unblocked :m :m1 :mjpact :ub :line 3}
+{:clk 2000.0861 :act :m1-move-off :m :m1 :bf :b1 :n 2 :mjpact :bj :j 1601 :line 4}
+{:clk 2000.0861 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2001.0861 :mjpact :aj :j 1602 :line 5}
+{:clk 2001.0861 :act :m1-blocked :m :m1 :mjpact :bl :line 6}
+{:clk 2001.1861 :act :m2-move-off :m :m2 :ent 1995.8512 :mjpact :ej :j 1598 :line 7}
+{:clk 2001.1861 :act :m2-start-job :m :m2 :bf :b1 :n 3 :mjpact :sm :j 1599 :line 8}
+{:clk 2001.1861 :act :m1-unblocked :m :m1 :mjpact :ub :line 9}
+{:clk 2001.1861 :act :m1-move-off :m :m1 :bf :b1 :n 2 :mjpact :bj :j 1602 :line 10}
+{:clk 2001.1861 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2002.1861 :mjpact :aj :j 1603 :line 11}
+{:clk 2002.1861 :act :m1-blocked :m :m1 :mjpact :bl :line 12}
+{:clk 2002.2861 :act :m2-move-off :m :m2 :ent 1996.8512 :mjpact :ej :j 1599 :line 13}
 ```
 Note that:
- * :n is the occupancy of the buffer before the action (:act). 
- * :ends is the time at which the job will end. 
-
-Messages regarding events that occur simultaneously are not necessarily in 
-the expected 'natural' order. However, log entries are always chronologically
-ordered. 
+ * :n is the occupancy of the buffer before the action (:act).
+ * :ent is the time at which the job enters the system and starts work on the first machine.
+ * :ends is the time at which the job will end.
+ * :m is the machine involved (if any).
+ * :bf is the buffer involved (if any).
+ * :jt is job type.
+ * :j is the job id. 
+ * :mjpact is a shorthand classification of what is happening
+   ..* :sm = start on machine
+   ..* :aj = add job (same as :sm but on entry machine).
+   ..* :bl = blocking
+   ..* :ub = unblocked
+   ..* :st = starving
+   ..* :us = unstarved
 
 ## Limitations
 

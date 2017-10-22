@@ -4,8 +4,9 @@
   (:require [clojure.test :refer :all]
             [clojure.spec.test.alpha :as stest]
             [gov.nist.MJPdes.core :refer (preprocess-model map->Model map->ExpoMachine map->Buffer map->JobType)]
-            [gov.nist.MJPdes.util.log :refer :all :as log]))
-
+            [gov.nist.MJPdes.util.utils :as util :refer (ppp ppprint)]
+            [gov.nist.MJPdes.util.log :as log]))
+                        
 ;;; POD If you recompile nn.clj after evaluating this, it won't happen. 
 (stest/instrument) ; Instrument everything.
 
@@ -46,22 +47,22 @@
              {:act :sm, :bf :b1, :j 622, :n 3, :clk 2142.3528055936404}
              {:act :bj, :bf :b1, :j 625, :n 2, :clk 2142.3528055936404}
              {:act :ub, :m :m1, :clk 2142.3528055936404}])
-           [{:clk 2136.1528, :act :m2-move-off, :m :m2, :ent 2120.6528, :j 619}
-            {:clk 2136.1528, :act :m2-start-job, :m :m2, :bf :b1, :n 3, :j 620}
-            {:clk 2139.2528, :act :m2-move-off, :m :m2, :ent 2123.7528, :j 620}
-            {:clk 2139.2528, :act :m2-start-job, :m :m2, :bf :b1, :n 3, :j 621}
-            {:clk 2142.3528, :act :m2-move-off, :m :m2, :ent 2126.8528, :j 621}
-            {:clk 2142.3528, :act :m2-start-job, :m :m2, :bf :b1, :n 3, :j 622}
-            {:clk 2133.0528, :act :m1-unblocked, :m :m1}
-            {:clk 2133.0528, :act :m1-start-job, :jt :jobType1, :m :m1, :ends 2134.0528, :j 623}
-            {:clk 2134.0528, :act :m1-blocked, :m :m1}
-            {:clk 2136.1528, :act :m1-move-off, :m :m1, :bf :b1, :n 2, :j 623}
-            {:clk 2136.1528, :act :m1-unblocked, :m :m1}
-            {:clk 2136.1528, :act :m1-start-job, :jt :jobType1, :m :m1, :ends 2137.3138, :j 624}
-            {:clk 2137.3138, :act :m1-blocked, :m :m1}
-            {:clk 2139.2528, :act :m1-move-off, :m :m1, :bf :b1, :n 2, :j 624}
-            {:clk 2139.2528, :act :m1-unblocked, :m :m1}
-            {:clk 2139.2528, :act :m1-start-job, :jt :jobType1, :m :m1, :ends 2140.6418, :j 625}
-            {:clk 2140.6418, :act :m1-blocked, :m :m1}
-            {:clk 2142.3528, :act :m1-move-off, :m :m1, :bf :b1, :n 2, :j 625}
-            {:clk 2142.3528, :act :m1-unblocked, :m :m1}]))))
+           [{:clk 2136.1528, :act :m2-move-off, :m :m2, :ent 2120.6528, :mjpact :ej, :j 619}
+            {:clk 2136.1528, :act :m2-start-job, :m :m2, :bf :b1, :n 3, :mjpact :sm, :j 620}
+            {:clk 2139.2528, :act :m2-move-off, :m :m2, :ent 2123.7528, :mjpact :ej, :j 620}
+            {:clk 2139.2528, :act :m2-start-job, :m :m2, :bf :b1, :n 3, :mjpact :sm, :j 621}
+            {:clk 2142.3528, :act :m2-move-off, :m :m2, :ent 2126.8528, :mjpact :ej, :j 621}
+            {:clk 2142.3528, :act :m2-start-job, :m :m2, :bf :b1, :n 3, :mjpact :sm, :j 622}
+            {:clk 2133.0528, :act :m1-unblocked, :m :m1, :mjpact :ub}
+            {:clk 2136.1528, :act :m1-unblocked, :m :m1, :mjpact :ub}
+            {:clk 2139.2528, :act :m1-unblocked, :m :m1, :mjpact :ub}
+            {:clk 2142.3528, :act :m1-unblocked, :m :m1, :mjpact :ub}
+            {:clk 2133.0528, :act :m1-start-job, :jt :jobType1, :m :m1, :ends 2134.0528, :mjpact :aj, :j 623}
+            {:clk 2134.0528, :act :m1-blocked, :m :m1, :mjpact :bl}
+            {:clk 2136.1528, :act :m1-move-off, :m :m1, :bf :b1, :n 2, :mjpact :bj, :j 623}
+            {:clk 2136.1528, :act :m1-start-job, :jt :jobType1, :m :m1, :ends 2137.3138, :mjpact :aj, :j 624}
+            {:clk 2137.3138, :act :m1-blocked, :m :m1, :mjpact :bl}
+            {:clk 2139.2528, :act :m1-move-off, :m :m1, :bf :b1, :n 2, :mjpact :bj, :j 624}
+            {:clk 2139.2528, :act :m1-start-job, :jt :jobType1, :m :m1, :ends 2140.6418, :mjpact :aj, :j 625}
+            {:clk 2140.6418, :act :m1-blocked, :m :m1, :mjpact :bl}
+            {:clk 2142.3528, :act :m1-move-off, :m :m1, :bf :b1, :n 2, :mjpact :bj, :j 625}]))))
