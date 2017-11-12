@@ -13,5 +13,6 @@
         (let [in (java.io.PushbackReader. (io/reader in-file))
               model (eval (edn/read {:eof :eof} in))]
           (with-open [out-stream (if out-file (io/writer out-file :encoding "UTF-8") *out*)]
-            (main-loop model :out-stream out-stream))))
+            (main-loop model :out-stream out-stream)))
+        (shutdown-agents))
       (println "File" in-file "does not exist."))))

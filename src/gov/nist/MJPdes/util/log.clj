@@ -54,26 +54,104 @@
     (and (not= equip1 equip2)
          (some #(= % equip1) top)
          (some #(= % equip2) top)
-         (> (.indexOf top equip1)
+         (< (.indexOf top equip1)
             (.indexOf top equip2)))))
 
-(defn msg-before?
-  "Returns true if msg1 should be reported before msg2.
-   Both are assumed to have the same :clk."
+(defn exception?
+  [act]
+  (some #(= act %) [:st :us :bl :ub]))
+
+(defn sort-blocked
+  "AFAIK, blocked appear alone (because you were working, 
+   you finish and suddenly, uh oh."
   [model msg1 msg2]
-  (let [equip1 (or (:m msg1) (:bf msg1))
-        equip2 (or (:m msg2) (:bf msg2))
-        up? (and equip1 equip2 (upstream? model equip1 equip2))
+  true)
+
+(defn sort-unblocked
+  "return true if msg1 should come before msg2"
+  [model msg1 msg2]
+    [model msg1 msg2]
+  (let [ep1 (or (:m msg1) (:bf msg1))
+        ep2 (or (:m msg2) (:bf msg2)) ; model below for easier testing.
+        up? (and model ep1 ep2 (upstream? model ep1 ep2))
+        same? (= ep1 ep2)
+        down? (and (not up?) (not same?))
         act1 (:mjpact msg1)
         act2 (:mjpact msg2)]
-    (cond up? true, 
-          (and (= equip1 equip2)
-               (= act1 :ub)
-               (or (= act2 :sm) (= act2 :aj) (= act2 :bj))) true,
-          (and (= equip1 equip2)
-               (= act1 :us)
-               (= act2 :sm)) true,
+    (cond ;; Do downtream before unblocking.
+          (and down? (or (= act1 :ej) (= act1 :sm)) (= act2 :ub)) true,
+          (and   up? (or (= act2 :ej) (= act2 :sm)) (= act1 :ub)) false,
+          ;; unblock before starting or moving off 
+          (and same? (= act1 :ub) (or (= act2 :sm) (= act2 :aj) (= act2 :bj))) true,
+          ;; move-off before starting
+          (and same? (or (= act1 :bj) (= act1 :ej)) (or (= act2 :sm) (= act2 :aj))) true,
+          ;; If neither of them are exceptional, do downstream first
+          (and down? (not (exception? act1)) (not (exception? act2))) true,
+          (and   up? (not (exception? act1)) (not (exception? act2))) false,
           :else false)))
+
+(defn sort-starved
+  "return true if msg1 should come before msg2"
+  [model msg1 msg2]
+    [model msg1 msg2]
+  (let [act1 (:mjpact msg1)
+        act2 (:mjpact msg2)]
+    (cond (and (= act1 :ej) (= act2 :st)) true,
+          true false)))
+
+(defn sort-unstarved
+  "return true if msg1 should come before msg2"
+  [model msg1 msg2]
+  (let [ep1 (or (:m msg1) (:bf msg1))
+        ep2 (or (:m msg2) (:bf msg2)) ; model below for easier testing.
+        up? (and model ep1 ep2 (upstream? model ep1 ep2))
+        same? (= ep1 ep2)
+        down? (and (not up?) (not same?))
+        act1 (:mjpact msg1)
+        act2 (:mjpact msg2)]
+    (cond ;; Do upstream before unstarving.
+          (and up?   (or (= act1 :bj) (= act1 :aj)) (= act2 :us)) true,
+          (and down? (or (= act2 :bj) (= act2 :aj)) (= act1 :us)) false,
+          ;; unstarve before starting 
+          (and same? (= act1 :us) (= act2 :sm)) true,
+          ;; move-off before starting
+          (and same? (= act1 :bj) (or (= act2 :sm) (= act2 :aj))) true,
+          ;; If neither of them are exceptional, do upstream first
+          (and down? (not (exception? act1)) (not (exception? act2))) false,
+          (and   up? (not (exception? act1)) (not (exception? act2))) true,
+          :else false)))
+
+(defn sort-ordinary
+  "return true if msg1 should come before msg2"
+  [model msg1 msg2]
+    (let [ep1 (or (:m msg1) (:bf msg1))
+        ep2 (or (:m msg2) (:bf msg2)) ; model below for easier testing.
+        up? (and model ep1 ep2 (upstream? model ep1 ep2))
+        same? (= ep1 ep2)
+        down? (and (not up?) (not same?))
+        act1 (:mjpact msg1)
+        act2 (:mjpact msg2)]
+      (cond up?   true
+            down? false
+            (and (= act1 :ej) (= act2 :sm)) true
+            (and (= act1 :bf) (= act2 :aj)) true
+            (and (= act1 :bj) (= act2 :sm)) true
+            true false)))
+
+(defn sort-messages
+  "Return the messages sorted in a good chronological order."
+  [model msgs]
+  (let [mtable (apply sorted-map
+                      (mapcat (fn [[k v]] (vector k v)) ; POD easier way?
+                              (group-by :clk msgs)))]
+    (vec
+     (mapcat (fn [[_ msgs]]
+               (cond (some #(= :bl (:mjpact %)) msgs) (sort (partial sort-blocked   model) msgs)
+                     (some #(= :ub (:mjpact %)) msgs) (sort (partial sort-unblocked model) msgs)
+                     (some #(= :st (:mjpact %)) msgs) (sort (partial sort-starved   model) msgs)
+                     (some #(= :us (:mjpact %)) msgs) (sort (partial sort-unstarved model) msgs)
+                     true                             (sort (partial sort-ordinary  model) msgs)))
+             mtable))))
 
 (declare buf+ buf- end-job block+ block- starve+ starve-)
 (defn add-compute-log!
@@ -272,7 +350,7 @@
       (assoc ?msg :act (mjp2pretty-name ?msg)))))
 
 (def msg-key-order "Order we want message keys to appear in printed logs"
-  [:clk :act :jt :m :bf :n :ent :ends :mjpact :j :line])
+  [:clk :act :m :mjpact :bf :jt :n :ent :ends :j :line])
 
 (defn msg-key-compare
   "Return true if k1 is before k2 in the sort order msg-key-order."
@@ -289,7 +367,7 @@
   [model clean-buf]
   (->> clean-buf
        (map #(prettyfy-msg model %))
-       (sort #(msg-before? model %1 %2))
+       (sort-messages model)
        (map  #(shorten-msg-floats model %))
        (map  #(into (sorted-map-by msg-key-compare) %))))
 

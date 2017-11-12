@@ -91,8 +91,9 @@
   (let [m (-> (mjp/map->Model
                {:line {:m1 (mjp/map->ExpoMachine {:name :m1 :W 1.0 :lambda 0.1 :mu 0.9})}
                 :topology [:m1]
-                :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}})
-              mjp/preprocess-model)]
+                :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}
+                :jobmix {:jobType1 (mjp/map->JobType {:portion 1.0 :w {:m1 1.0}})}})
+              (mjp/preprocess-model :check? false))]
     (binding [log/*log-steady* (atom (log/steady-form m))] ; create a log for computations.
       (-> m 
           (log/log {:act :bl, :m :m1, :clk 0.5})
@@ -118,7 +119,7 @@
                    {:line {:m1 (mjp/map->ExpoMachine {:name :m1 :W 1.0 :lambda 0.1 :mu 0.9})}
                     :topology [:m1]
                     :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}})
-                  mjp/preprocess-model)]
+                  (mjp/preprocess-model :check? false))]
     (binding [log/*log-steady* (atom (log/steady-form model))] ; create a log for computations.
       (-> model
           (log/log {:act :st, :m :m1, :clk 0.5})

@@ -107,7 +107,6 @@
 (spec/def ::line (spec/and (spec/map-of keyword? ::equipment) #(>= (count %) 3)))
 (spec/def ::Model (spec/keys :req-un [::line ::topology ::entry-point ::jobmix ::report ::params]))
 
-
 (defn catch-up-machine!
   "Advance the machine state so that its :future is in the future." 
   [m now]
@@ -481,7 +480,7 @@
 (defn preprocess-model
   "Add detail and check model for correctness. 
    Make line a sorted-map (if only for readability)."
-  [model]
+  [model & {:keys [check?] :or {check? true}}]
   (let [jm2dm (or (:jm2dm model) (:jobs-move-to-down-machines? +defaults+))] ; POD fix this?
     (as-> model ?m
       (assoc ?m :log-buf [])
@@ -508,7 +507,9 @@
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0)
-      (spec-check-model ?m))))
+      (if check?
+        (spec-check-model ?m)
+        ?m))))
 
 (defn calc-basics
   "Produce a results form containing percent time blocked, and job residence time."
