@@ -121,10 +121,30 @@
    {:clk 2142.3528, :act :m1-unblocked, :m :m1, :mjpact :ub}
    {:clk 2142.3528, :act :m1-move-off,  :m :m1, :bf :b1, :n 2,  :mjpact :bj, :j 625}])
 
+(defn pick-from-atom!
+  "Randomly remove one element from the atom and return it."
+  [atom]
+  (let [picked (nth @atom (rand-int (count @atom)))]
+    (swap! atom (fn [a] (remove #(= picked %) a)))
+    picked))
+
+(defn right-order-random
+  "Return a random order of all the messages from right-order."
+  []
+  (let [size (count right-order)
+        patom (atom (range size))
+        order (repeatedly size #(pick-from-atom! patom))]
+    (mapv #(nth right-order %) order)))
+
 (deftest pretty-printing-messages
   (testing "that the form printed is correct (more extensive message ordering too)."
-    (is (= right-order (log/sort-messages test-model right-order)))))
+    (is (= right-order (log/sort-messages test-model (right-order-random)))) ; wow am I lazy!
+    (is (= right-order (log/sort-messages test-model (right-order-random))))
+    (is (= right-order (log/sort-messages test-model (right-order-random))))
+    (is (= right-order (log/sort-messages test-model (right-order-random))))
+    (is (= right-order (log/sort-messages test-model (right-order-random))))))
 
+  
 
 
 
