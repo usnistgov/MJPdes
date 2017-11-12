@@ -62,7 +62,8 @@
 (def ^:private failed (atom nil))
 
 (defn failed-seqs
-  "Set the 'problem' (the log we look at) to the m2-inhib-bas problem."
+  "The function for the test fixture. It is used so failures don't accumulate
+   in failed across different runs of the tests."
   [f]
   (reset! failed [])
   (f)) ; The canonical fixture function, in this case called using the 'once' procedure
