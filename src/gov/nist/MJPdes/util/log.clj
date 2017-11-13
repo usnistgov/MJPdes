@@ -63,7 +63,7 @@
 
 (defn sort-blocked
   "AFAIK, blocked appear alone (because you were working, 
-   you finish and suddenly, uh oh."
+   you finish and suddenly, uh oh)."
   [model msg1 msg2]
   true)
 
