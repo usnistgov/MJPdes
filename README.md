@@ -1,8 +1,9 @@
 # MJPdes
 
-A discrete event simulation engine for multi-job production
+A discrete event simulation engine for mixed-model asynchronous serial production lines
 
-Multi-job production systems, a specialization of mixed-model production systems, are production systems
+This software supports simulation of mixed-model and multi-job production systems.
+Multi-job production is a specialization of mixed-model production systems, are production systems
 where jobs of specified job types flow through all workcenters (machines) of the main line, but the
 processing time at each workcenter may differ according to the job's type.
 
