@@ -332,9 +332,9 @@
   [msg]
   (let [m (:m msg)]
     (cond (= :aj (:act msg)) (read-string (cl-format nil "~A-start-job"    m)),
-          (= :ej (:act msg)) (read-string (cl-format nil "~A-move-off"     m)),
+          (= :ej (:act msg)) (read-string (cl-format nil "~A-complete-job" m)),
           (= :sm (:act msg)) (read-string (cl-format nil "~A-start-job"    m)),
-          (= :bj (:act msg)) (read-string (cl-format nil "~A-move-off"     m)),
+          (= :bj (:act msg)) (read-string (cl-format nil "~A-complete-job" m)),
           (= :bl (:act msg)) (read-string (cl-format nil "~A-blocked"      m)),
           (= :ub (:act msg)) (read-string (cl-format nil "~A-unblocked"    m)),
           (= :st (:act msg)) (read-string (cl-format nil "~A-starved"      m)),
