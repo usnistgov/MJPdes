@@ -7,6 +7,14 @@
 
 (def ^:dynamic *log-steady* "Collects essential data for steady-state calculations." nil)
 
+(defn buf-occ
+  "Return a map summarize the model's buffer occupancy."
+  [model]
+  (let [bufs (:buffers model)]
+    (zipmap
+     bufs
+     (map #(-> model :line % :holding count) bufs))))
+
 (defn log
   "Add to the log-buffer. On a clock tick it will be cleaned and written to log."
   [model log-map]
@@ -349,8 +357,10 @@
       (assoc ?msg :mjpact (:act ?msg))
       (assoc ?msg :act (mjp2pretty-name ?msg)))))
 
+;;; POD NOTE! If you fail to include a key here, the message printing gets
+;;;     messed up, with values not matched to the correct keys!
 (def msg-key-order "Order we want message keys to appear in printed logs"
-  [:clk :act :m :mjpact :bf :jt :n :ent :ends :j :line])
+  [:clk :act :m :mjpact :bf :jt :n :ent :ends :j :bufs :line])
 
 (defn msg-key-compare
   "Return true if k1 is before k2 in the sort order msg-key-order."
