@@ -177,6 +177,7 @@
 (defn add-job
   "Add a job to the line. Save the time it completes on the machine."
   [model j m-name]
+  (reset! diag {:model model})
   (let [[ends future] (job-updates! model
                                    (assoc j :starts (:clock model))
                                    (util/lookup model m-name))
@@ -185,7 +186,7 @@
               (assoc ?j :starts (:clock model))
               (assoc ?j :ends ends))]
     (-> model
-        (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model) :bufs (log/buf-occ model)}) ; not essential
+        (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model) :dets (log/detail model)}) ; not essential
         (update-in [:params :current-job] inc)
         (assoc-in [:line m-name :status] job)
         (assoc-in [:line m-name :future] future))))
@@ -204,7 +205,7 @@
 ;;;    (when (= :up (first future))
 ;      (throw (ex-info "Expected an down future!" {:m-name m-name :model model})))
     (-> model 
-      (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b)) :clk (:clock model) :bufs (log/buf-occ model)})
+      (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b)) :clk (:clock model) :dets (log/detail model)})
       (assoc-in  [:line m-name :status] job)
       (assoc-in  [:line m-name :future] future)
       (update-in [:line b-name :holding] #(vec (rest %))))))
@@ -224,8 +225,8 @@
 ;      (throw (ex-info "buffer exceeds capacity!" {:model model :m-name :m-name})))
     (as-> model ?m
       (if b?
-        (log/log ?m {:act :bj :bf b? :j (:id job) :n (count (:holding (util/lookup model b?))) :clk now :bufs (log/buf-occ model)}) 
-        (log/log ?m {:act :ej :m (:name m) :j (:id job) :ent (:enters job) :clk now :bufs (log/buf-occ model)}))
+        (log/log ?m {:act :bj :bf b? :j (:id job) :n (count (:holding (util/lookup model b?))) :clk now :dets (log/detail model)}) 
+        (log/log ?m {:act :ej :m (:name m) :j (:id job) :ent (:enters job) :clk now :dets (log/detail model)}))
       (assoc-in ?m [:line m-name :status] nil)
       (if b?
         (update-in ?m [:line b? :holding] conj job)
@@ -236,25 +237,25 @@
 (defn new-blocked
   [model m-name]
   (-> model
-      (log/log {:act :bl :m m-name :clk (:clock model) :bufs (log/buf-occ model)})
+      (log/log {:act :bl :m m-name :clk (:clock model) :dets (log/detail model)})
       (update :blocked conj m-name)))
 
 (defn new-unblocked
   [model m-name]
   (-> model
-      (log/log {:act :ub :m m-name :clk (:clock model) :bufs (log/buf-occ model)})
+      (log/log {:act :ub :m m-name :clk (:clock model) :dets (log/detail model)})
       (update :blocked disj m-name)))
 
 (defn new-starved
   [model m-name]
   (-> model 
-      (log/log {:act :st :m m-name :clk (:clock model) :bufs (log/buf-occ model)})
+      (log/log {:act :st :m m-name :clk (:clock model) :dets (log/detail model)})
       (update :starved conj m-name)))
 
 (defn new-unstarved
   [model m-name]
   (-> model
-      (log/log {:act :us :m m-name :clk (:clock model) :bufs (log/buf-occ model)})
+      (log/log {:act :us :m m-name :clk (:clock model) :dets (log/detail model)})
       (update :starved disj m-name)))
 ;;;=============== End of Record-actions ========================================
 (defn new-job
