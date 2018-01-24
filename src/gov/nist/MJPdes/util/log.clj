@@ -6,24 +6,26 @@
    [gov.nist.MJPdes.util.utils :as util :refer (ppp ppprint)]))
 
 (def ^:dynamic *log-steady* "Collects essential data for steady-state calculations." nil)
+(def ^:private diag (atom nil))
 
 (defn detail
   "Return a map of operation details including what jobs are in what machines or buffers."
   [model]
-  (let [bufs (:buffers model)
-        machines (:machines model)]
-    {:run
-     (zipmap
-      machines
-      (map (fn [mach-key]
-             (-> model :line mach-key :status :id))
-           machines))
-     :bufs
-     (zipmap
-      bufs
-      (map (fn [buf-key]
-             (mapv :id (-> model :line buf-key :holding)))
-           bufs))}))
+  (when (-> model :report :job-detail?)
+    (let [bufs (:buffers model)
+          machines (:machines model)]
+      {:run
+       (zipmap
+        machines
+        (map (fn [mach-key]
+               (-> model :line mach-key :status :id))
+             machines))
+       :bufs
+       (zipmap
+        bufs
+        (map (fn [buf-key]
+               (mapv :id (-> model :line buf-key :holding)))
+             bufs))})))
 
 (defn log
   "Add to the log-buffer. On a clock tick it will be cleaned and written to log."
@@ -184,7 +186,39 @@
             :ub (block-  % msg)
             :st (starve+ % msg)
             :us (starve- % msg)
-            :aj @*log-steady*)))
+            :aj @*log-steady*
+            :up @*log-steady*
+            :down @*log-steady*)))
+
+;;; POD This part of the design sucks. Should have something else (lazy-seqs?)
+;;; rather than this dynamically bound atom!
+(def ;^:dynamic
+  +up&down+
+  "A map tracking machine up and down (used only when logging machine up&down.
+   It looks like this: {:m1 [[:up 1.3], [:down 2.3], [:up 2.4]] ...}."
+  (atom nil))
+
+(defn log-up&down!
+  "If tracking machine up and down messages, log those before or at the current clock.
+   If not tracking, just remove them from +up&down+."
+  [model]
+  (let [clk (:clock model)
+        parts (reduce (fn [res [k vs]]
+                        (-> res
+                            (assoc-in [:now    k] (filterv (fn [[_ t]] (<= t clk)) vs))
+                            (assoc-in [:later  k] (filterv (fn [[_ t]] (> t clk))  vs))))
+                      {}
+                      @+up&down+)]
+    (reset! +up&down+ (:later parts)) ; the ! part.
+    (if (-> model :report :up&down?)
+      (reduce (fn [model m]
+                (reduce (fn [model [act time]]
+                           (log model {:clk time :m m :act act}))
+                        model
+                        (-> parts :now m)))
+              model
+              (:machines model))
+      model)))
 
 (declare print-now? pretty-buf print-lines)
 (defn push-log
@@ -192,21 +226,23 @@
    since the last clock tick. The :log-buf has msgs from the next clock tick,
    so you have to sort them and only push the old ones."
   [model up-to-clk]
+  (reset! diag {:model model :up-to-clk up-to-clk})
   ;(doall (map println (-> model :log-buf)))
   ;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf. 
   (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
                :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
-        clean-buf (clean-log-buf (:now parts))
+        clean-buf     (cond->> (:now parts)
+                        (not (:job-detail? model)) (mapv #(dissoc % :dets))
+                        true (clean-log-buf))
         warm-up (-> model :params :warm-up-time)]
+
     (when (> up-to-clk warm-up)
       (doall (map #(when (> (:clk %) warm-up)
                      (add-compute-log! %))
                   clean-buf)))
-    (as-> model ?m
-      (if (print-now? model parts up-to-clk)
-        (print-lines ?m clean-buf)
-        ?m)
-      (assoc ?m :log-buf (vec (:later parts))))))
+    (cond-> model 
+      (print-now? model parts up-to-clk) (print-lines clean-buf)
+      true (assoc :log-buf (vec (:later parts))))))
 
 (defn print-lines
   "Actually print the lines, updating (-> model :report :line-cnt)."
@@ -214,7 +250,6 @@
   (let [fmt (str "{:clk" (-> model :params :time-format) "~{ ~A~}}~%")
         buf (pretty-buf model clean-buf)
         line-num (atom (-> model :report :line-cnt))]
-    (when (== 0 (-> model :report :line-cnt)) (println "["))
     (run! (fn [line]
             (cl-format *out* fmt
                        (:clk line)
@@ -224,16 +259,10 @@
                            flatten))
             (swap! line-num inc))
           buf)
-    (let [model (as-> model ?m
-                  ;; :diag-log-buf used in core.clj testing. 
-                  (if (-> ?m :report :diag-log-buf?)
-                    (update-in ?m [:diag-log-buf] #(into % buf))
-                    ?m)
-                  (update-in ?m [:report :line-cnt] #(+ % (count buf))))]
-      (when (>= (-> model :report :line-cnt)
-                (-> model :report :max-lines))
-        (println "]"))
-      model)))
+    (cond-> model 
+      ;; :diag-log-buf used in core.clj testing. 
+      (-> model :report :diag-log-buf?) (update-in [:diag-log-buf] #(into % buf))
+      true (update-in [:report :line-cnt] #(+ % (count buf))))))
 
 ;;;{:residence-sum 0.0,
 ;;; :njobs 0,
@@ -356,7 +385,9 @@
           (= :bl (:act msg)) (read-string (cl-format nil "~A-blocked"      m)),
           (= :ub (:act msg)) (read-string (cl-format nil "~A-unblocked"    m)),
           (= :st (:act msg)) (read-string (cl-format nil "~A-starved"      m)),
-          (= :us (:act msg)) (read-string (cl-format nil "~A-unstarved"    m)))))
+          (= :us (:act msg)) (read-string (cl-format nil "~A-unstarved"    m)),
+          (= :up (:act msg)) (read-string (cl-format nil "~A-up"           m)),
+          (= :down (:act msg)) (read-string (cl-format nil "~A-down"       m)))))
 
 (defn prettyfy-msg
   "Interpret/translate the SCADA log. (Give pretty-fied pn names to MJPdes output.)" 

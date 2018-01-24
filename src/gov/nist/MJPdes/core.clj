@@ -166,13 +166,12 @@
 ;;; :us - unstarved
 ;;;=============== Actions update the model =====================================
 (defn bring-machine-up
-  "Nothing to do here but (possible) loggging. The clock was advanced and 
+  "Nothing to do here but, perhaps, logging. The clock was advanced and 
    machine futures updated by call to advance-clock in main-loop."
   [model m-name]
   (let [m (util/lookup model m-name)] ; diag
     (when (util/up? m-name) (throw (ex-info "Machine is already up!" {:machine m-name})))
-    (-> model
-        #_(log/log {:act :up :m m-name :clk (:clock model)})))) ; not essential
+    model))
 
 (defn add-job
   "Add a job to the line. Save the time it completes on the machine."
@@ -203,7 +202,7 @@
         [ends future] (job-updates! model job (util/lookup model m-name))
         job (assoc job :ends ends)]
 ;;;    (when (= :up (first future))
-;      (throw (ex-info "Expected an down future!" {:m-name m-name :model model})))
+;      (throw (ex-info "Expected a down future!" {:m-name m-name :model model})))
     (-> model 
       (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b)) :clk (:clock model) :dets (log/detail model)})
       (assoc-in  [:line m-name :status] job)
@@ -427,7 +426,7 @@
 (defn exponential-up&down
   "Return a function that, when called, returns the next event and time 
    on a markov chain representing an exponential machine."
-  [lambda mu]
+  [lambda mu mname]
   (let [up? (atom (< (rand) (/ mu (+ lambda mu)))) 
         T (atom (s/sample-exp 1 :rate (if @up? lambda mu)))
         T-delta (atom 0.0)]
@@ -437,6 +436,7 @@
         (let [t-delt (s/sample-exp 1 :rate (if up-now? mu lambda))]
           (if (< (rand) (p-state-change @T-delta (if up-now? lambda mu)))
             (let [answer [(if up-now? :down :up) t-now]]
+              (swap! log/+up&down+ #(update % mname conj answer))
               (reset! T-delta 0.0)
               (swap! T + t-delt)
               (swap! up? not)
@@ -461,8 +461,6 @@
   [[k e]]
   (cond (instance? ExpoMachine e)
         (as-> e ?m 
-          (assoc ?m :mchain (exponential-up&down (:lambda ?m) (:mu ?m)))
-          (assoc ?m :future ((:mchain ?m)))
           (assoc ?m :name k)
           (assoc ?m :W (if (number? (:W ?m)) (:W ?m) (rand-range (:bounds (:W ?m)))))
           [k ?m]),
@@ -478,6 +476,21 @@
           [k ?b])
         :else [k e]))
 
+(defn machine-mchains
+  "Update the model with mchain functions. This cannot be at pre-process-equip 
+   simply because (:machines model) isn't specified yet!"
+  [model]
+  (let [machs (:machines model)]
+    (reset! log/+up&down+ (zipmap machs (repeat (count machs) [])))
+    (reduce (fn [model m]
+              (let [lambda (-> model :line m :lambda)
+                    mu     (-> model :line m :mu)]
+                (as-> model ?m
+                  (assoc-in ?m [:line m :mchain] (exponential-up&down lambda mu m))
+                  (assoc-in ?m [:line m :future] ((-> ?m :line m :mchain))))))
+            model
+            machs)))
+
 (defn preprocess-model
   "Add detail and check model for correctness. 
    Make line a sorted-map (if only for readability)."
@@ -489,8 +502,8 @@
       (update-in ?m [:report] #(if (empty? %) {:log? false :line-cnt 0 :max-lines 0} (assoc % :line-cnt 0)))
       (assoc ?m :jm2dm jm2dm)
       (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
-      (assoc ?m :machines (vec (filter #(machine? (util/lookup model %)) (:topology model))))
-      (assoc ?m :buffers  (vec (filter #(buffer?  (util/lookup model %)) (:topology model))))
+      (assoc ?m :machines (filterv #(machine? (util/lookup model %)) (:topology model)))
+      (assoc ?m :buffers  (filterv #(buffer?  (util/lookup model %)) (:topology model)))
       (assoc ?m :clock 0.0)
       (assoc ?m :blocked #{})
       (assoc ?m :starved #{})
@@ -508,6 +521,7 @@
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0)
+      (machine-mchains ?m)
       (if check?
         (spec-check-model ?m)
         ?m))))
@@ -636,7 +650,8 @@
                    (binding [log/*log-steady* (atom (log/steady-form ?m))] ; create a log for computations.
                      (loop [model ?m]
                        (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
-                         (as-> model ?m1 ; blocking does not advance the clock 
+                         (as-> model ?m1 
+                           (log/log-up&down! ?m1) ; blocking does not advance the clock
                            (log/push-log  ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
                            (advance-clock ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
                            (if (or (and (:run-to-job (:params ?m1))
