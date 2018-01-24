@@ -107,18 +107,13 @@
 (spec/def ::line (spec/and (spec/map-of keyword? ::equipment) #(>= (count %) 3)))
 (spec/def ::Model (spec/keys :req-un [::line ::topology ::entry-point ::jobmix ::report ::params]))
 
-(defn catch-up-machine!
+(defn catch-up-machine
   "Advance the machine state so that its :future is in the future." 
-  [m now]
-  (let [[_ ftime] (:future m)]
-    (if (> ftime now)
-      m
-      (assoc m :future
-             (loop [fut (:future m)]
-               (let [[_ ftime] fut]
-                    (if (> ftime now) 
-                      fut
-                      (recur ((:mchain m))))))))))
+  [model m now]
+  (loop [model model]
+    (if (> (-> model m :future second) now)
+      model
+      (recur ((-> model m :mchain) model)))))
 
 (defn advance-clock
   "Move clock and machines forward in time."
@@ -131,10 +126,9 @@
       model
       :else
       (as-> model ?m
-        (reduce (fn [mod m-name]
-                  (assoc-in mod [:line m-name]
-                            (catch-up-machine! (util/lookup model m-name) new-clock)))
-                ?m (:machines ?m))
+        (reduce (fn [model m] (catch-up-machine model m new-clock))
+                ?m
+                (:machines ?m))
         (assoc ?m :clock new-clock)))))
 
 (defn job-updates!
@@ -422,13 +416,20 @@
 ;;; This implements *time-dependent failure*, that is, breakdown and repair are
 ;;; insensitive to time blocked or starved. The alternative is called *operation-dependent
 ;;; failure* machine breakdowns cannot occur while blocked or starved. Semyon's book
-;;; notes that in practice the difference might be small (1-3%). 
-(defn exponential-up&down
+;;; notes that in practice the difference might be small (1-3%).
+(defn init-exponential-up&down
+  [model lambda mu m]
+  (let [up? (< (rand) (/ mu (+ lambda mu)))]
+    (-> model 
+        (assoc-in [:line m :state :up?] up?)
+        (assoc-in [:line m :state :T] (s/sample-exp 1 :rate (if up? lambda mu))))))
+
+#_(defn exponential-up&down
   "Return a function that, when called, returns the next event and time 
    on a markov chain representing an exponential machine."
   [lambda mu mname]
-  (let [up? (atom (< (rand) (/ mu (+ lambda mu)))) 
-        T (atom (s/sample-exp 1 :rate (if @up? lambda mu)))
+  (let [up?     (atom (< (rand) (/ mu (+ lambda mu)))) 
+        T       (atom (s/sample-exp 1 :rate (if @up? lambda mu)))
         T-delta (atom 0.0)]
     (fn []
       (loop [up-now? @up? 
@@ -443,6 +444,26 @@
               answer)
             (do (swap! T-delta + t-delt)
                 (recur @up? @T))))))))
+
+(defn exponential-up&down
+  "Return a function that, when called, returns the next event and time 
+   on a markov chain representing an exponential machine."
+  [lambda mu m]
+  (fn [model]
+    (loop [model model 
+           T-delta 0.0]
+      (let [up-now? (-> model :line m :state :up?)
+            t-now   (-> model :line m :state :T)
+            t-delt (s/sample-exp 1 :rate (if up-now? mu lambda))]
+        (if (< (rand) (p-state-change T-delta (if up-now? lambda mu)))
+          (let [answer [(if up-now? :down :up) t-now]]
+            (-> model
+                (update-in [:up&down m] conj answer)
+                (update-in [:line m :state :T] + t-delt)
+                (assoc-in  [:line m :future] answer)
+                (assoc-in  [:line m :state :up?] (first answer))))
+          (recur (update-in model  [:line m :up?] not)
+                 (+ T-delta t-delt)))))))
 
 (defn spec-check-model
   "Do clojure.spec-based testing of the model."
@@ -487,7 +508,7 @@
                     mu     (-> model :line m :mu)]
                 (as-> model ?m
                   (assoc-in ?m [:line m :mchain] (exponential-up&down lambda mu m))
-                  (assoc-in ?m [:line m :future] ((-> ?m :line m :mchain))))))
+                  ((-> ?m :line m :mchain) ?m)))) ; set :future, and :state .
             model
             machs)))
 

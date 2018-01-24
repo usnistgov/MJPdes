@@ -224,12 +224,10 @@ Setting :machine-up&down? to true directs the program to report when an (exponen
 goes down or up. For example:
 
 ```clojure
-{:clk 1999.8745 :act :down :m :m3}
-{:clk 1999.8980 :act :up   :m :m3}
-```.
-
-In the example, at 1999.8745 machine :m3 went down; at 199.8980 it came back up. 
-
+{:clk 2032.0994 :act :m2-down :m :m2 :mjpact :down :line 98}
+{:clk 2032.3566 :act :m2-up :m :m2 :mjpact :up :line 99}
+```
+In the example, at 2032.0994 machine :m2 went down; at 2032.3566 it came back up. 
 
 ## Limitations
 
