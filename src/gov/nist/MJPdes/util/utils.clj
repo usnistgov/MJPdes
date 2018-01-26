@@ -1,14 +1,24 @@
 (ns gov.nist.MJPdes.util.utils
-  (:require [clojure.pprint :refer (cl-format pprint pp)]))
+  (:require [clojure.pprint :refer (cl-format pprint pp)]
+            [clojure.spec.alpha :as s]))
+
+(alias 'core 'gov.nist.MJPdes.core)
 
 ;;;=== General =========================
 (defn ppp []
-  (binding [clojure.pprint/*print-right-margin* 140]
+  (binding [clojure.pprint/*print-right-margin* 140
+            *print-length* 10]
     (pprint *1)))
 
-(defn ppprint [arg]
-  (binding [clojure.pprint/*print-right-margin* 140]
-    (pprint arg)))
+(defn ppprint
+  ([arg]
+   (binding [clojure.pprint/*print-right-margin* 140
+             *print-length* 10]
+     (pprint arg)))
+  ([arg len]
+    (binding [clojure.pprint/*print-right-margin* 140
+              *print-length* len]
+      (pprint arg))))
 
 (defn break
   ([] (throw (ex-info "Break!" {})))
@@ -45,11 +55,6 @@
                       :variance (variance starve)
                       :values starve}}))))
 
-(defn lookup
-  "Return the machine or buffer named NAME."
-  [model name]
-  (get (:line model) name))
-
 (defn buffers-to
   "Return the name of the buffer that the named machine buffers to.
    (Returns the thing after the argument.)"
@@ -68,10 +73,12 @@
         (nth top (dec pos))))))
 
 (defn up? [m]
-  (= :down (first (:future m))))
+  (s/assert ::core/ExpoMachine m)
+  (= :down (second (:future m))))
 
 (defn down? [m]
-  (= :up (first (:future m))))
+  (s/assert ::core/ExpoMachine m)    
+  (= :up (second (:future m))))
 
 (defn finished? [model m]
   "Returns true if the machine is finished with what it is working on???"
@@ -80,22 +87,24 @@
         (>= (:clock model) (:ends status)))))
 
 (defn occupied? [m]
+  (s/assert ::core/machine m)
   (:status m))
 
 (defn feed-buffer-empty? [model m] 
   "Returns true if buffer feeding machine m is empty." 
   (when (not= (:name m) (:entry-point model))
-    (let [buf (lookup model (takes-from model (:name m)))]
+    (let [buf (get (:line model) (takes-from model (:name m)))]
       (== (count (:holding buf)) 0))))
 
 (defn buffer-full? [model m] 
   "Returns true if the buffer that machine m places completed work on is full."
-  (when-let [buf (lookup model (buffers-to model (:name m)))] ; last machine cannot be blocked.
+  (when-let [buf (get (:line model) (buffers-to model (:name m)))] ; last machine cannot be blocked.
     (== (count (:holding buf)) (:N buf))))
 
 (defn job-requires
   "Total time that job j requires on a machine m, (w_{ij}/W_i)"
   [model j m]
-  (let [W (or (:W m) 1.0)
-        w (get (:w (get (:jobmix model) (:type j))) (:name m))] 
+  (let [mach (-> model :line m)
+        W (or (:W mach) 1.0)
+        w (get (:w (get (:jobmix model) (:type j))) m)] 
     (/ w W)))

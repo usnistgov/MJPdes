@@ -22,6 +22,26 @@
              (group-by #(Math/round (quot % 0.1))
                        (s/sample-exp 100000 :rate 0.9)))))
 
+(defn =* [x y tol] (< (- x tol) y (+ x tol)))
+
+; (end-time mmm 15.0 :m1)
+(def job-ends-model
+  {:clk 10.5
+   :line {:m1 {:up&down [[0 :down 10.138318336024103]
+                         [1 :up   10.991435470545209]
+                         [2 :down 18.189385678401067]
+                         [3 :up   18.507587845132132]
+                         [4 :down 35.608712172391236]
+                         [5 :up   36.852624249573]
+                         [6 :down 63.65613563175827]
+                         [7 :up   64.5679392394569]]}}})
+
+(deftest job-ends-test
+  (testing "that core/job-ends works.")
+  (is (=* (mjp/end-time job-ends-model 15.0 :m1)
+          26.309637637276275
+          0.0000000000001)))
+
 (defn fdata []
   (let [cnt (atom -1)]
     (fn []

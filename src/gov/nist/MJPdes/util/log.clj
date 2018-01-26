@@ -1,7 +1,7 @@
 (ns gov.nist.MJPdes.util.log
   "Data collection, editing, and printing of DES events"
   (:require
-   [clojure.spec.alpha :as spec]
+   [clojure.spec.alpha :as s]
    [clojure.pprint :refer (cl-format pprint pp)]
    [gov.nist.MJPdes.util.utils :as util :refer (ppp ppprint)]))
 
@@ -56,12 +56,12 @@
         (rem-fn [:st :us] sm ?log)
         ?log))))
 
-(spec/def ::act keyword?)
-(spec/def ::clk float?)
-(spec/def ::msg (spec/keys :req-un [::clk ::act]))
-(spec/def ::buf (spec/coll-of ::msg))
+(s/def ::act keyword?)
+(s/def ::clk float?)
+(s/def ::msg (s/keys :req-un [::clk ::act]))
+(s/def ::buf (s/coll-of ::msg))
 ;;; Call it with a collection of messages all happening at the same time.  
-(spec/fdef clean-log-buf :args (spec/and (spec/cat :buf ::buf)
+(s/fdef clean-log-buf :args (s/and (s/cat :buf ::buf)
                                          #(let [clk (-> % :args :buf first :clk)]
                                             (every? (fn [msg] (== clk (:clk %)))
                                                     (-> % :args :buf)))))
@@ -190,32 +190,17 @@
             :up @*log-steady*
             :down @*log-steady*)))
 
-;;; POD This part of the design sucks. Should have something else (lazy-seqs?)
-;;; rather than this dynamically bound atom!
-(def ;^:dynamic
-  +up&down+
-  "A map tracking machine up and down (used only when logging machine up&down.
-   It looks like this: {:m1 [[:up 1.3], [:down 2.3], [:up 2.4]] ...}."
-  (atom nil))
-
-(defn log-up&down!
-  "If tracking machine up and down messages, log those before or at the current clock.
-   If not tracking, just remove them from +up&down+."
+(defn log-up&down
+  "If tracking machine up and down messages, log those before or at the current clock."
   [model]
-  (let [clk (:clock model)
-        parts (reduce (fn [res [k vs]]
-                        (-> res
-                            (assoc-in [:now    k] (filterv (fn [[_ t]] (<= t clk)) vs))
-                            (assoc-in [:later  k] (filterv (fn [[_ t]] (> t clk))  vs))))
-                      {}
-                      @+up&down+)]
-    (reset! +up&down+ (:later parts)) ; the ! part.
+  (let [now (:clock model)]
     (if (-> model :report :up&down?)
       (reduce (fn [model m]
-                (reduce (fn [model [act time]]
-                           (log model {:clk time :m m :act act}))
-                        model
-                        (-> parts :now m)))
+                (let [report-now (take-while #(< (nth % 2) now) (-> model :line m :up&down))]
+                  (reduce (fn [model [_ event etime]]
+                            (log model {:clk etime :m m :act event}))
+                          model
+                          report-now)))
               model
               (:machines model))
       model)))
@@ -235,7 +220,6 @@
                         (not (:job-detail? model)) (mapv #(dissoc % :dets))
                         true (clean-log-buf))
         warm-up (-> model :params :warm-up-time)]
-
     (when (> up-to-clk warm-up)
       (doall (map #(when (> (:clk %) warm-up)
                      (add-compute-log! %))
@@ -277,7 +261,7 @@
                   (:machines model)))
     (into ?r (map (fn [b] [(:name b) (assoc (zipmap (range (inc (:N b))) (repeat (+ 2 (:N b)) 0.0))
                                             :lastclk (-> model :params :warm-up-time))])
-                  (map #(util/lookup model %) (:buffers model))))))
+                  (map #(-> model :line %) (:buffers model))))))
 
 ;;; Examples
 ;;;   r = {... :b2 {0 0.0, 1 0.0, 2 0.0, 3 0.0, 4 0.0, 5 0.0 :lastclk 0.0}},
@@ -303,11 +287,11 @@
   [r o]
   (assoc-in r [(:m o) :bs] (:clk o)))
 
-(spec/def ::njobs (spec/and integer? #(>= % 0)))
-(spec/def ::residence-sum (spec/and number? #(>= % 0)))
-(spec/def ::steady (spec/keys :req-un [::residence-sum ::njobs]))
-(spec/fdef block+
-           :args (spec/cat :steady ::steady :msg ::msg)
+(s/def ::njobs (s/and integer? #(>= % 0)))
+(s/def ::residence-sum (s/and number? #(>= % 0)))
+(s/def ::steady (s/keys :req-un [::residence-sum ::njobs]))
+(s/fdef block+
+           :args (s/cat :steady ::steady :msg ::msg)
            :fn (fn [r o] (not (:bs ((:m o) r))))) ; not blocking twice 
 
 (defn block- ; action is :ub
@@ -324,8 +308,8 @@
   [r o]
   (assoc-in r [(:m o) :ss] (:clk o)))
 
-(spec/fdef starve+
-           :args (spec/cat :steady ::steady :msg ::msg)
+(s/fdef starve+
+           :args (s/cat :steady ::steady :msg ::msg)
            :fn (fn [r o] (not (:ss ((:m o) r))))) ; not starving twice 
 
 
