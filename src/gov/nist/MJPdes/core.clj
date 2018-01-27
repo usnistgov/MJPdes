@@ -2,6 +2,7 @@
   "Multi-job production (mixed-model production) discrete event simulation."
   {:author "Peter Denno"}
   (:require [clojure.spec.alpha :as s]
+            [clojure.spec.test.alpha :as stest]
             [incanter.stats :as stats :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
             [clojure.edn :as edn]
@@ -25,12 +26,14 @@
 ;;;   - fix blocked-requires-not-starved
 
 ;;; POD Library users aren't going to like this! Needed for debugging.
-;;; binding just doesn't cut it. 
-(set! *print-length* 30) 
+;;; Possibly wasn't needed. 
+;;; (set! *print-length* 30) 
 (def ^:private diag (atom nil))
 (def ^:private +defaults+
   {:jobs-move-to-down-machines? false
    :time-format "~10,4f"})
+
+(s/check-asserts true)
 
 (defrecord Model [line entry-point jobmix params topology print])
 
@@ -76,14 +79,15 @@
 (s/def ::type keyword?)
 (s/def ::Job (s/keys :req-un [::type ::id ::enters ::starts ::ends]))
 
-(s/def ::pos    (s/and number? pos?))
-(s/def ::posint (s/and integer? pos?))
+(s/def ::non-neg (s/and number? #(not (neg? %))))
+(s/def ::pos     (s/and number? pos?))
+(s/def ::posint  (s/and integer? pos?))
 
 (s/def ::W ::pos)
 (s/def ::mu ::pos)
 (s/def ::lambda ::pos)
 (s/def ::up&down seq?)
-(s/def ::status (s/or :not-busy #(not %) :has-a-job ::Job)) ; POD nilable ::Job
+(s/def ::status (s/nilable ::Job))
 (s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down]))
 
 (s/def ::N ::posint)
@@ -93,9 +97,9 @@
 (s/def ::event (s/coll-of ::eventval :kind vector? :min-count 3 :max-count 3))
 
 (s/def ::rmachine #(and (not (contains? % :lambda))
-                           (not (contains? % :mu))))
+                        (not (contains? % :mu))))
 
-(s/def ::warm-up-time ::pos)
+(s/def ::warm-up-time ::non-neg)
 (s/def ::run-to-time ::pos)
 (s/def ::params (s/keys ::warm-up-time ::run-to-time))
 
@@ -125,8 +129,6 @@
   [model new-clock]
   (let [clock (:clock model)]
     (cond
-      (> clock new-clock)
-      (throw (ex-info "Clock moving backwards!" {:clock clock :new-clock new-clock})),
       (= clock new-clock)
       model,
       :else
@@ -135,6 +137,11 @@
                 ?m
                 (:machines ?m))
         (assoc ?m :clock new-clock)))))
+
+(s/fdef advance-clock
+        :args (s/and (s/cat :model ::Model :new-clock ::non-neg)
+                     #(<= (-> (:model %) :clock) (:new-clock %)))
+        :ret ::Model)
 
 (defn end-time
   "Scan through :up&down and determine when the job will end."
@@ -205,9 +212,8 @@
 ;;; :st - starved
 ;;; :us - unstarved
 ;;;=============== Actions update the model =====================================
-(defn bring-machine-up ; <===================================================================== NOT TRUE ????
-  "Nothing to do here but, perhaps, logging. The clock was advanced and 
-   machine futures updated by call to advance-clock in main-loop."
+(defn bring-machine-up 
+  "Update :future on machine and call advance-clock on old value."
   [model m]
   (let [[n event etime] (-> model :line m :future)
         next-state (first (take 1 (drop-while #(<= (first %) n) (-> model :line m :up&down))))]
@@ -226,36 +232,36 @@
                 (assoc :enters (:clock model))
                 (assoc :starts (:clock model))
                 (assoc :ends ends))]
-    (reset! diag 
-            (-> model
-                (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends
-                          :clk (:clock model) :dets (log/detail model)}) ; not essential
-                (update-in [:params :current-job] inc)
-                (assoc-in [:line m :status] job)
-                (assoc-in [:line m :future] (machine-future model m))))))
+    (-> model
+        (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends
+                  :clk (:clock model) :dets (log/detail model)}) ; not essential
+        (update-in [:params :current-job] inc)
+        (assoc-in [:line m :status] job)
+        (assoc-in [:line m :future] (machine-future model m)))))
 
-;;; POD write clojure.spec for (1) machine-busy (2) no job in buffer. (3) machine not up.
-;;; Maybe not (3) - (see jobs-moves-to-down-machine?)
 (defn advance2machine
   "Move a job off the buffer onto the machine. Compute time it completes."
   [model m]
-;;;  (when (-> model :line m :status) ; diag
-;;;    (throw (ex-info "Machine already busy!" {:machine m :model model})))
   (let [b-name (util/takes-from model m)
         b (-> model :line b-name)
         job (-> (first (:holding b))
                 (assoc :starts (:clock model)))
         ends (end-time model (util/job-requires model job m) m)
         job (assoc job :ends ends)]
-    (when (not job) ; POD TEMPORARY
-      (throw (ex-info "No job when moving job to machine!" {:model model})))
-    (when (= :up (-> model :line m :future second)) ; POD TEMPORARY
-      (throw (ex-info "Expected machine to be up!" {:m m :model model})))
     (-> model 
-      (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b)) :clk (:clock model) :dets (log/detail model)})
-      (assoc-in  [:line m :status] job)
-      (assoc-in  [:line m :future] (machine-future model m))
-      (update-in [:line b-name :holding] #(vec (rest %))))))
+        (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b))
+                  :clk (:clock model) :dets (log/detail model)})
+        (assoc-in  [:line m :status] job)
+        (assoc-in  [:line m :future] (machine-future model m))
+        (update-in [:line b-name :holding] #(vec (rest %))))))
+
+;;; POD Nope, look at conforming value
+#_(s/fdef advance2machine ; Check that buffer has a job. 
+        :args (s/and (s/cat :model ::Model :m keyword?) ; jobs-move-to-down-machine?
+                     #(let [m (:m %)
+                            b-name (util/takes-from (:model %) m)]
+                        (-> (:model %) :line b-name :holding)))
+        :ret ::Model)
 
 ;;; POD write clojure.spec for (1) buffer empty (2) 
 (defn advance2buffer
@@ -265,8 +271,6 @@
         job  (:status mach)
         b?   (util/buffers-to model m)
         now  (:clock model)]
-    (when (not job) ; POD TEMPORARY
-      (throw (ex-info "No job when moving job to buffer!" {:model model})))
     (as-> model ?m
       (if b?
         (log/log ?m {:act :bj :bf b? :j (:id job) :n (count (-> ?m :line b? :holding))
@@ -274,9 +278,15 @@
         (log/log ?m {:act :ej :m (:name mach) :j (:id job) :ent (:enters job) 
                      :clk now :dets (log/detail model)}))
       (assoc-in ?m [:line m :status] nil)
-      (do (reset! diag {:model ?m :b? b? :job job}) ?m)
       (cond-> ?m
         b? (update-in [:line b? :holding] conj job)))))
+
+;;; POD Nope, look at conforming value
+#_(s/fdef advance2buffer
+        :args (s/and (s/cat :model ::Model :m keyword?)
+                     #(let [m (:m %)]
+                        (-> (:model %) :line m :status)))
+        :ret ::Model)
 
 ;;;=============== End of Actions ===============================================
 ;;;=============== Record-actions don't move jobs around. =======================
@@ -699,4 +709,5 @@
       (main-loop-once  model out-stream)
       (main-loop-multi model out-stream))))
 
-
+;;; Instrument works best when down here. 
+(stest/instrument)

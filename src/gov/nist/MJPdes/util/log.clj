@@ -310,8 +310,7 @@
 
 (s/fdef starve+
            :args (s/cat :steady ::steady :msg ::msg)
-           :fn (fn [r o] (not (:ss ((:m o) r))))) ; not starving twice 
-
+           :fn (fn [r o] (not (:ss ((:m o) r)))))
 
 (defn starve- ; action is :us
   "Stop clock on machine for starving."
