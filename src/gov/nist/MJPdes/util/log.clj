@@ -30,7 +30,10 @@
 (defn log
   "Add to the log-buffer. On a clock tick it will be cleaned and written to log."
   [model log-map]
-  (update model :log-buf #(conj % log-map)))
+  (let [keep? (or (-> model :report :up&down?)
+                  (not (#{:up :down} (:act log-map))))]
+    (cond-> model
+      keep? (update :log-buf #(conj % log-map)))))
 
 (defn clean-log-buf
   "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
@@ -190,43 +193,32 @@
             :up @*log-steady*
             :down @*log-steady*)))
 
-(defn log-up&down
-  "If tracking machine up and down messages, log those before or at the current clock."
-  [model]
-  (let [now (:clock model)]
-    (if (-> model :report :up&down?)
-      (reduce (fn [model m]
-                (let [report-now (take-while #(< (nth % 2) now) (-> model :line m :up&down))]
-                  (reduce (fn [model [_ event etime]]
-                            (log model {:clk etime :m m :act event}))
-                          model
-                          report-now)))
-              model
-              (:machines model))
-      model)))
-
 (declare print-now? pretty-buf print-lines)
 (defn push-log
   "Clean up the :log-buf and record (add-compute-log!) all msgs accumulated in it
    since the last clock tick. The :log-buf has msgs from the next clock tick,
    so you have to sort them and only push the old ones."
-  [model up-to-clk]
-  (reset! diag {:model model :up-to-clk up-to-clk})
-  ;(doall (map println (-> model :log-buf)))
-  ;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf. 
-  (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
-               :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
-        clean-buf     (cond->> (:now parts)
-                        (not (:job-detail? model)) (mapv #(dissoc % :dets))
-                        true (clean-log-buf))
-        warm-up (-> model :params :warm-up-time)]
-    (when (> up-to-clk warm-up)
-      (doall (map #(when (> (:clk %) warm-up)
-                     (add-compute-log! %))
-                  clean-buf)))
-    (cond-> model 
-      (print-now? model parts up-to-clk) (print-lines clean-buf)
-      true (assoc :log-buf (vec (:later parts))))))
+  [model]
+  ;;(doall (map println (-> model :log-buf)))
+  ;;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf.
+    (let [now    (:clock model)
+          before (:last-clock model)]
+    (if (> now before) ; Time to log!
+      (let [;model (cond-> model (-> model :report :up&down?) (log-up&down)) 
+            parts {:now   (filter #(<= (:clk %) now) (-> model :log-buf))  ; yes <=, not <. 
+                   :later (remove #(<= (:clk %) now) (-> model :log-buf))}
+            clean-buf     (cond->> (:now parts)
+                            (not (:job-detail? model)) (mapv #(dissoc % :dets))
+                            true (clean-log-buf))
+            warm-up (-> model :params :warm-up-time)]
+        (when (>= now warm-up)
+          (doall (map #(when (> (:clk %) warm-up)
+                         (add-compute-log! %))
+                      clean-buf)))
+        (cond-> model
+          (print-now? model parts now) (print-lines clean-buf)
+          true (assoc :log-buf (vec (:later parts)))))
+      model)))
 
 (defn print-lines
   "Actually print the lines, updating (-> model :report :line-cnt)."
@@ -330,12 +322,12 @@
 
 ;;;============= Pretty printing ===================================================
 (defn print-now?
-  "Returns true if it is time to add to the log."
-  [model parts up-to-clk]
+  "Returns true if it is time to print log entries."
+  [model parts now]
   (and (-> model :report :log?)
        (not-empty (:now parts))
-       (> (-> model :report :max-lines) (-> model :report :line-cnt))
-       (> up-to-clk (-> model :params :warm-up-time))))
+       (>  (-> model :report :max-lines) (-> model :report :line-cnt))
+       (>= now (-> model :params :warm-up-time))))
 
 (defn shorten-msg-floats
   [model msg]

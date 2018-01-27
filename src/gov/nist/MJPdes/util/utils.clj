@@ -72,13 +72,13 @@
       (when (> pos 0)
         (nth top (dec pos))))))
 
-(defn up? [m]
-  (s/assert ::core/ExpoMachine m)
-  (= :down (second (:future m))))
+(defn up? [mach]
+  (s/assert ::core/ExpoMachine mach)
+  (= :down (second (:future mach))))
 
-(defn down? [m]
-  (s/assert ::core/ExpoMachine m)    
-  (= :up (second (:future m))))
+(defn down? [mach]
+  (s/assert ::core/ExpoMachine mach)    
+  (= :up (second (:future mach))))
 
 (defn finished? [model m]
   "Returns true if the machine is finished with what it is working on???"
