@@ -204,8 +204,7 @@
     (let [now    (:clock model)
           before (:last-clock model)]
     (if (> now before) ; Time to log!
-      (let [;model (cond-> model (-> model :report :up&down?) (log-up&down)) 
-            parts {:now   (filter #(<= (:clk %) now) (-> model :log-buf))  ; yes <=, not <. 
+      (let [parts {:now   (filter #(<= (:clk %) now) (-> model :log-buf))  ; yes <=, not <. 
                    :later (remove #(<= (:clk %) now) (-> model :log-buf))}
             clean-buf     (cond->> (:now parts)
                             (not (:job-detail? model)) (mapv #(dissoc % :dets))

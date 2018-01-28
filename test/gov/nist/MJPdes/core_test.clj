@@ -6,7 +6,7 @@
             [gov.nist.MJPdes.util.log :as log]
             [gov.nist.MJPdes.core :as core]
             [gov.nist.MJPdes.util.utils :as util]
-            [incanter.stats :as s]
+            [incanter.stats :as stats :refer (sample-exp)]
             [clojure.edn :as edn]
             [clojure.pprint :refer (cl-format pprint)]))
 
@@ -21,43 +21,52 @@
   (into (sorted-map)
         (map (fn [[k v]] [k (count v)])
              (group-by #(Math/round (quot % 0.1))
-                       (s/sample-exp 100000 :rate 0.9)))))
+                       (stats/sample-exp 100000 :rate 0.9)))))
 
 (defn =* [x y tol] (< (- x tol) y (+ x tol)))
 
-(def job-ends-model
-  {:clk 10.5
-   :line {:m1 {:up&down [[0 :down 10.138318336024103]
-                         [1 :up   10.991435470545209]
-                         [2 :down 18.189385678401067]
-                         [3 :up   18.507587845132132]
-                         [4 :down 35.608712172391236]
-                         [5 :up   36.852624249573]
-                         [6 :down 63.65613563175827]
-                         [7 :up   64.5679392394569]]}}})
-
-(deftest job-ends-test
-  (testing "that core/job-ends works.")
-  (is (=* (core/end-time job-ends-model 15.0 :m1)
-          26.309637637276275
-          0.0000000000001)))
-
 (def fdata 
-  (seq [[0 :up    1.5669655022427902]
-        [1 :down 10.138318336024103]
-        [2 :up   10.991435470545209]
-        [3 :down 18.189385678401067]
-        [4 :up   18.507587845132132]
-        [5 :down 35.608712172391236]
-        [6 :up   36.852624249573]
-        [7 :down 63.65613563175827]
-        [8 :up   64.5679392394569]]))
+  (seq [[0 :down  1.0903780292458096]
+        [1 :up    1.5669655022427902]
+        [2 :down 10.138318336024103]
+        [3 :up   10.991435470545209]
+        [4 :down 18.189385678401067]
+        [5 :up   18.507587845132132]
+        [6 :down 35.608712172391236]
+        [7 :up   36.852624249573]
+        [8 :down 63.65613563175827]
+        [9 :up   64.5679392394569]]))
 
-;;; This is down-time before it ends. (Add this to 50 for job-updates!)
-(+ (- 1.5669655022427902 1.0903780292458096)
-   (- 10.991435470545209 10.138318336024103)
-   (- 18.507587845132132 18.189385678401067)
-   (- 36.852624249573    35.608712172391236))
+(def tmodel
+  (core/map->Model
+   {:line 
+    {:m1 (core/map->ExpoMachine {:name :m1 :W 1.0 :up&down fdata :future [0 :down 1.0903780292458096]})} 
+    :topology [:m1]
+    :clock 0.0
+    :params {:current-job 0}
+    :jobmix {:jobType1 (core/map->JobType {:portion 1.0 :w {:m1 50.0}})}}))
+
+(def tjob (-> (core/new-job tmodel) (assoc :starts 0)))
+  
+;;; fdata end-time = last time the machine starts up plus what remains to be achieved at that time.
+(def tjob-done-at ; = 52.89181885143091
+  "This works because it drop into a big uptime starting at 36.852624249573."
+  (let [idle (+ (- 1.5669655022427902 1.0903780292458096)    ; 0.47658747299698057
+                (- 10.991435470545209 10.138318336024103)    ; 0.8531171345211064
+                (- 18.507587845132132 18.189385678401067)    ; 0.3182021667310657
+                (- 36.852624249573    35.608712172391236))   ; 1.2439120771817613
+        achieved (+ 1.0903780292458096
+                    (- 10.138318336024103  1.5669655022427902) ; 8.571352833781312
+                    (- 18.189385678401067 10.991435470545209)  ; 7.1979502078558575
+                    (- 35.608712172391236 18.507587845132132)) ; 17.101124327259104
+        last-up 36.852624249573]
+    (+ last-up (- 50 achieved))))
+
+(deftest job-tests-1
+  (testing "whether job would end when expected given fixed up&down schedule"
+    (let [dur  (util/job-requires tmodel tjob :m1)]
+      (is (== 50.0 dur))
+      (is (=* tjob-done-at (core/end-time tmodel 50.0 :m1) 0.0000000001)))))
 
 (def fdata1
   (seq
@@ -70,29 +79,27 @@
     [6 :down 63.65613563175827]
     [7 :up   64.5679392394569]]))
 
-(deftest job-tests
-  (testing "whether job would end when expected given fixed up&down schedule"
-    (let [tmodel (core/map->Model
-                  {:line 
-                   {:m1 (core/map->ExpoMachine {:name :m1 :W 1.0 :up&down fdata :future [0 :down 1.0903780292458096]})} 
-                   :topology [:m1]
-                   :clock 0.0
-                   :params {:current-job 0}
-                   :jobmix {:jobType1 (core/map->JobType {:portion 1.0 :w {:m1 50.0}})}})
-          tjob (-> (core/new-job tmodel) (assoc :starts 0))
-          dur  (util/job-requires tmodel tjob :m1)
-          tmodel1 (core/map->Model
-                   {:line 
-                    {:m1 (core/map->ExpoMachine {:name :m1 :W 1.0 :up&down fdata1 :future [0 :up 1.5669655022427902]})} 
-                    :topology [:m1]
-                    :clock 0.0
-                    :params {:current-job 0}
-                    :jobmix {:jobType1 (core/map->JobType {:portion 1.0 :w {:m1 50.0}})}})]
-      (is (== 50.0 dur))
-      (is (=* 52.89181885143091   (core/end-time tmodel  dur :m1) 0.0000000001))
-      (is (=* 53.982196880676725  (core/end-time tmodel1 dur :m1) 0.0000000001)))))
+(def tmodel1
+  (core/map->Model
+   {:line 
+    {:m1 (core/map->ExpoMachine {:name :m1 :W 1.0 :up&down fdata1 :future [0 :down 10.138318336024103]})} 
+    :topology [:m1]
+    :clock 0.0
+    :params {:current-job 0}
+    :jobmix {:jobType1 (core/map->JobType {:portion 1.0 :w {:m1 50.0}})}}))
 
-;(== 53.982196880676725 (+ 52.89181885143091 1.0903780292458096)
+(deftest job-tests-2
+  (testing "whether job would end when expected given fixed up&down schedule"
+    (let [dur  (util/job-requires tmodel1 tjob :m1)]
+      (is (== 50.0 dur))
+      (is (=* 52.415231378433944  (core/end-time tmodel1 50.0 :m1) 0.0000000001)))))
+
+;;;(== 53.982196880676725 (+ 52.89181885143091 1.0903780292458096)
+
+(defn update-clock [m old new]
+  (-> m
+      (assoc :last-clock old)
+      (assoc :clock new)))
 
 (defn test-bl-log
   "Write some block/unblock log to a file and make sure it adds up."
@@ -109,19 +116,25 @@
           (log/log {:act :ub, :m :m1, :clk 0.5})
           (log/log {:act :bl, :m :m1, :clk 0.5})
           (log/log {:act :ub, :m :m1, :clk 0.5})
-          (log/push-log 0.5) ; The above is realistic and should be cleaned by log/clean-log-buf.
+          (update-clock 0.0 0.5)
+          (log/push-log) ; The above is realistic and should be cleaned by log/clean-log-buf.
           (log/log {:act :bl, :m :m1, :clk 1.0})
-          (log/push-log 1.0)
+          (update-clock 0.5 1.0)
+          (log/push-log)
           (log/log {:act :ub, :m :m1, :clk 2.0}) ; total block = 1
-          (log/push-log 2.0)
+          (update-clock 1.0 2.0)
+          (log/push-log)
           (log/log {:act :bl, :m :m1, :clk 3.0})
-          (log/push-log 3.0)
+          (update-clock 2.0 3.0)
+          (log/push-log)
           (log/log {:act :ub, :m :m1, :clk 4.0}) ; total block = 2
-          (log/push-log 4.0)
-          (log/push-log 5.0)                     ; block percent = 2/5
+          (update-clock 3.0 4.0)
+          (log/push-log)
+          (update-clock 4.0 5.0)
+          (log/push-log)                     ; block percent = 2/5
           (core/calc-basics @log/*log-steady*)))))
 
-(defn test-sl-log
+(defn test-sl-log 
   "Write some block/unblock log to a file and make sure it adds up."
   []
   (let [model (-> (core/map->Model
@@ -135,16 +148,22 @@
           (log/log {:act :us, :m :m1, :clk 0.5})
           (log/log {:act :st, :m :m1, :clk 0.5})
           (log/log {:act :us, :m :m1, :clk 0.5})
-          (log/push-log 0.5) ; The above is realistic, but cleaned by log/clean-log-buf.
+          (update-clock 0.0 0.5)
+          (log/push-log) ; The above is realistic, but cleaned by log/clean-log-buf.
           (log/log {:act :st, :m :m1, :clk 1.0})
-          (log/push-log 1.0)
-          (log/log {:act :us, :m :m1, :clk 2.0})
-          (log/push-log 2.0)
+          (update-clock 0.5 1.0)
+          (log/push-log)
+          (log/log {:act :us, :m :m1, :clk 2.0}) ; 1 unit starved
+          (update-clock 1.0 2.0)
+          (log/push-log)
           (log/log {:act :st, :m :m1, :clk 3.0})
-          (log/push-log 3.0)
-          (log/log {:act :us, :m :m1, :clk 4.0})
-          (log/push-log 4.0)
-          (log/push-log 5.0)
+          (update-clock 2.0 3.0)
+          (log/push-log)
+          (log/log {:act :us, :m :m1, :clk 4.0}) ; 2 total units starved
+          (update-clock 3.0 4.0)
+          (log/push-log)
+          (update-clock 4.0 5.0)
+          (log/push-log)
           (core/calc-basics @log/*log-steady*)))))
 
 (deftest log-testing-1
@@ -155,50 +174,27 @@
   (testing "whether job would end when expected given fixed up&down schedule"
     (is (== 0.4 (-> (test-sl-log) :starved :m1)))))
 
-(defn test-efficiency
-  "Run an exponential machine 1 million times. Calculate efficiency."
-  [lambda mu]
-  (let [start (core/expo-up&down-init-event lambda mu)
-        up&down (core/expo-up&down lambda mu start)
-        run-history (repeatedly 1000000 mc)
-        final-time (last (last run-history))]  ; <===================== WORTH FINISHING!!!
-    (/ 
-     (loop [accum 0
-            last-up 0
-            hist run-history]
-       (if hist
-         (let [[state change-time] (first hist)]
-           (if (= state :down)
-             (recur (+ accum (- change-time last-up))
-                    change-time
-                    (next hist))
-             (recur accum change-time (next hist))))
-         accum))
-     final-time)))
-
-(deftest machine-test
-  (testing "Expected exponential machine behavior"
-    ;one-is-enough-for-now(is (< 0.49 (test-efficient 0.5 0.5) 0.51)) 
-    (is (< 0.899 (test-efficiency 0.1 0.9) 0.901))))
-
-(def diag-previous (atom nil))
-
-(defn catch-up-machine-test []
-  (let [result (atom true)]
-    (dotimes [_ 10000]
-      (reset! diag-previous 0)
-      (let [m (as-> (core/map->ExpoMachine {:name :m1 :W 1.0 :up&down (core/exponential-up&down 0.1 0.9)}) ?m
-                (assoc ?m :future ((:up&down ?m))))]
-        (let [now (rand 3000.0)
-              [_ time] (:future (core/catch-up-machine! m now))]
-          (when (not (< @diag-previous now time))
-            (println @diag-previous time now)
-            (reset! result false)))))
-    @result))
-
-(deftest catch-up-machine
-  (testing "Catch-up-machine works."
-    (is (= true (catch-up-machine-test)))))
+(deftest test-efficiency
+  (testing "that the lazy-seq generating up&down events produce uptime consistent 
+            values of mu and lambda."
+    (let [mu 0.9
+          lambda 0.1
+          start (core/expo-up&down-init-event lambda mu)
+          up&down (core/expo-up&down lambda mu start)
+          result (loop [uptime 0.0
+                        downtime 0.0
+                        last start
+                        up&down (drop 1 up&down)]
+                   (let [[last-n last-event last-etime] last
+                         [     n      event      etime :as this-one] (first (take 1 up&down))]
+                     (cond (= n 1000000) {:up uptime :down downtime}
+                           (= event last-event) (throw (ex-info "event generation fails." {}))
+                           :else (recur
+                                  (if (= event :down) (+ uptime   (- etime last-etime)) uptime)
+                                  (if (= event :up)   (+ downtime (- etime last-etime)) downtime)
+                                  this-one
+                                  (drop 1 up&down)))))]
+      (is (< 0.89 (/ (:up result) (+ (:up result) (:down result))) 0.91)))))
 
 (def tf1
   (core/preprocess-model

@@ -134,18 +134,19 @@
         (assoc ?m :last-clock (:clock ?m))
         (assoc ?m :clock new-clock)))))
 
+;;;  end-time = last time the machine starts up plus what remains to be achieved at that time.
 (defn end-time
   "Scan through :up&down and determine when the job will end."
   [model dur m]
-  (loop [decum dur
+  (loop [not-achieved dur
          now (:clock model)
          up&down (drop-while #(< (nth % 2) now) (-> model :line m :up&down))]
       (let [[_ event etime] (first (take 1 up&down))]
         (if (= event :up) ; then machine was down; move on. 
-          (recur decum etime (drop 1 up&down))
-          (if (> (- etime now) decum) ; then there is enough here to get it done.
-            (+ now decum) ; that's end-time. 
-            (recur (- decum (- etime now)) ; otherwise add it in and continue
+          (recur not-achieved etime (drop 1 up&down))
+          (if (> (- etime now) not-achieved) ; then there is enough here to get it done.
+            (+ now not-achieved) ; that's end-time. 
+            (recur (- not-achieved (- etime now)) ; otherwise add it in and continue
                    etime
                    (drop 1 up&down)))))))
 
@@ -184,7 +185,8 @@
                 (loop [T-delta (stats/sample-exp 1 :rate rate)]
                   (if (< some-num (p-state-change T-delta rate))
                     (+ t-now T-delta)
-                    (recur (+ T-delta (stats/sample-exp 1 :rate (if up-now? mu lambda)))))))])
+                    (recur (+ T-delta
+                              (stats/sample-exp 1 :rate rate))))))])
            start))
 
 (defn machine-future
