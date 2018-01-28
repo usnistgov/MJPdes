@@ -3,19 +3,20 @@
 A discrete event simulation engine for mixed-model asynchronous serial production lines
 
 This software supports simulation of mixed-model and multi-job production systems.
-Multi-job production is a specialization of mixed-model production systems, are production systems
-where jobs of specified job types flow through all workcenters (machines) of the main line, but the
-processing time at each workcenter may differ according to the job's type.
+Multi-job production is a specialization of mixed-model production systems
+where jobs of specified job types flow through all workcenters (machines) of the main line, 
+but the processing time at each workcenter may differ according to the job's type.
 
 The terminology used on this page mostly follows that of reference [1]. 
 
 The program currently enables modeling of asynchronous production lines consisting of machines separated by
-non-zero sized buffers. Machine reliability is exponential (i.e. modeled as a continuous-time
+non-zero-sized buffers. Machine reliability is exponential (i.e. modeled as a continuous-time
 Markov chain with Poisson processes of 'up' and 'down' events). Machines specify a work capacity. 
-Job types describe the amount of work required at each machine. The portion of each job type is specified
-and jobs of those types are sent to the first machine in the line in a random sequence.
+Job types describe the amount of work required at each machine. The portion of each job type to
+be produced is specified and jobs of those types are sent to the first machine in the line in a
+random sequence.
 
-The program reports:
+The program can report:
  * Starvation and blocking at each machine. (The first machine cannot starve; the last machine cannot be blocked.)
  * Throughput
  * The bottleneck machine
@@ -32,13 +33,14 @@ The program reports:
 1. Download the [leiningen shell script](http://leiningen.org/).
 2. Type 'lein deps' at a shell prompt in the MJPdes directory (where you cloned this git repository) and wait while
    leiningen downloads all the related libraries. 
-3. Type 'lein bin' at a shell prompt in the MJPdes directory. This will build an executable in the MJPdes/target directory. 
+3. Type 'lein bin' at a shell prompt in the MJPdes directory.
+This will build an executable in the MJPdes/target directory. 
 
 ## Usage
 
 The program takes a model specification as a file and runs it, printing results at the shell where it was started
-or to a file. Depending on the parameters, execution may take a few minutes or more. There is an example input file
-in the resources subdirectory.
+or to a file. Depending on the parameters, execution may take a few seconds or a few minutes or more. There is an
+example input file in the resources subdirectory.
 
 ```bash
 cd MJPdes/target
@@ -143,18 +145,29 @@ The details of these objects are as follows:
 
 ## Detailed 'SCADA log' output with :report
 
-You can get detailed output from the program describing movement of jobs through the
-line. You do this using a :report key/value pair as shown below. This key/value pair
-should be placed at the same level of parentheses nesting as the other application
-keys (i.e. placed with :topology, :job-mix etc.).
+You can get detailed output from the program describing (1) machine state changes
+including starting and completing jobs, starvation and blocking, (2) movement of jobs
+from machines to buffers and (3) machine state changes (up/down). These reporting
+features are controlled individually using a map of key/value pairs, :report, as shown
+below. This map should be placed at the same level of parentheses nesting
+as the other application keys (i.e. placed with :topology, :job-mix etc.).
+
+If :report is not specified, results are limited to those described earlier.
+When :report is specified, it is best to direct output to a file using
+the -o flag described earlier. 
+
+An example report specification:
 
 ```clojure
-:report {:log? true :max-lines 1000}
+:report {:max-lines 1000 :job-detail? true :machine-up&down? true}
 ```
-:max-lines specifies how many log entries to print. Printing starts after warm-up.
-(See :warm-up-time above.). :log? true just indicates that log information should be printed.
 
-An example follows:
+We first describe basic output. The three directives :max-lines, :job-detail? and :machine-up&down?
+are then described in turn.
+
+### Basic Output
+
+Specifying :report {:max-lines <some number>} will produce output similar to the following:
 
 ```clojure
 {:clk 1999.8512 :act :m1-blocked :m :m1 :mjpact :bl :line 0}
@@ -190,13 +203,38 @@ The :mjpact values have the following meanings:
  - :st = starving
  - :us = unstarved
 
+:max-lines specifies how many log entries (lines {:clk ...}) to print. Printing starts
+after warm-up. (See :warm-up-time above.). 
+
+### :job-detail?
+
+Setting :job-detail? to true directs the program to output details of where each job
+is in the system. An example log line with this data is:
+
+{:clk 1999.8745 :act :m3-complete-job :m :m3 :mjpact :ej :ent 1990.8793 :j 1307
+ :dets {:run {:m1 1313, :m2 1310, :m3 1307}, :bufs {:b1 [1311 1312], :b2 [1308 1309]}} :line 0}
+
+:run indicates which jobs are currently running. In the example, 1313 is running on machine :m1.
+:bufs describes what jobs are in buffers. The buffer downstream of machine :m1, :b1, contains
+two jobs, 1311 and 1312.
+
+### :machine-up&down?
+
+Setting :machine-up&down? to true directs the program to report when an (exponential) machine
+goes down or up. For example:
+
+```clojure
+{:clk 2032.0994 :act :m2-down :m :m2 :mjpact :down :line 98}
+{:clk 2032.3566 :act :m2-up :m :m2 :mjpact :up :line 99}
+```
+In the example, at 2032.0994 machine :m2 went down; at 2032.3566 it came back up. 
+
 ## Limitations
 
 Currently:
  * The program only simulates a single line (no subassembly lines).
  * Buffer size must be > 0.
- * The program only supports exponential machine models.
-
+ * The program only supports exponential and reliable machine models.
 
 ## Disclaimer
 The use of any software or hardware by the project does not imply a recommendation or endorsement by NIST.

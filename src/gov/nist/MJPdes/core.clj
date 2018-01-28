@@ -1,8 +1,9 @@
 (ns gov.nist.MJPdes.core
   "Multi-job production (mixed-model production) discrete event simulation."
   {:author "Peter Denno"}
-  (:require [clojure.spec.alpha :as spec]
-            [incanter.stats :as s :refer (sample-exp)]
+  (:require [clojure.spec.alpha :as s]
+            [clojure.spec.test.alpha :as stest]
+            [incanter.stats :as stats :refer (sample-exp)]
             [clojure.pprint :refer (cl-format pprint)]
             [clojure.edn :as edn]
             [gov.nist.MJPdes.util.utils :as util :refer (ppprint ppp)]
@@ -24,17 +25,21 @@
 ;;;    space in the buffer eventually is available. 
 ;;;   - fix blocked-requires-not-starved
 
+;;; POD Library users aren't going to like this! Needed for debugging.
+;;; Possibly wasn't needed. 
+;;; (set! *print-length* 30) 
 (def ^:private diag (atom nil))
- ;;;(def +diag-expect-job+ (atom 0))
 (def ^:private +defaults+
   {:jobs-move-to-down-machines? false
    :time-format "~10,4f"})
+
+(s/check-asserts true)
 
 (defrecord Model [line entry-point jobmix params topology print])
 
 (defrecord Machine [])
 (defrecord ReliableMachine [name status])  ; For specific tests. Assume W=1
-(defrecord ExpoMachine     [name lambda mu status W mchain])
+(defrecord ExpoMachine     [name lambda mu status W up&down])
 
 (defn reliable? [m]
     (instance? ReliableMachine m))
@@ -44,7 +49,9 @@
       (instance? ReliableMachine m)
       (instance? Machine m)))
 
-(defn machines [model]
+(defn machines
+  "Return the machine maps of the model line."
+  [model]
   (let [line (:line model)]
     (map #(% line) (:machines model))))
 
@@ -65,95 +72,128 @@
                 starts ; clock at which it will start CURRENT MACHINE
                 ends]) ; clock at which it will finish CURRENT MACHINE
 
-(spec/def ::ends float?)
-(spec/def ::starts float?)
-(spec/def ::enters float?)
-(spec/def ::id integer?)
-(spec/def ::type keyword?)
-(spec/def ::Job (spec/keys :req-un [::type ::id ::enters ::starts ::ends]))
+(s/def ::ends float?)
+(s/def ::starts float?)
+(s/def ::enters float?)
+(s/def ::id integer?)
+(s/def ::type keyword?)
+(s/def ::Job (s/keys :req-un [::type ::id ::enters ::starts ::ends]))
 
-(spec/def ::pos    (spec/and number? pos?))
-(spec/def ::posint (spec/and integer? pos?))
+(s/def ::non-neg (s/and number? #(not (neg? %))))
+(s/def ::pos     (s/and number? pos?))
+(s/def ::posint  (s/and integer? pos?))
 
-(spec/def ::W ::pos)
-(spec/def ::mu ::pos)
-(spec/def ::lambda ::pos)
-(spec/def ::mchain fn?)
-(spec/def ::status (spec/or :not-busy #(not %) :has-a-job ::Job))
-(spec/def ::ExpoMachine (spec/keys :req-un [::lambda ::mu ::W ::status ::mchain]))
+(s/def ::W ::pos)
+(s/def ::mu ::pos)
+(s/def ::lambda ::pos)
+(s/def ::up&down seq?)
+(s/def ::status (s/nilable ::Job))
+(s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down]))
 
-(spec/def ::N ::posint)
-(spec/def ::Buffer (spec/keys :req-un [::N]))
+(s/def ::N ::posint)
+(s/def ::Buffer (s/keys :req-un [::N]))
 
-(spec/def ::rmachine #(and (not (contains? % :lambda))
-                           (not (contains? % :mu))))
+(s/def ::event (s/tuple [number? #{:up :down} number?]))
 
-(spec/def ::warm-up-time ::pos)
-(spec/def ::run-to-time ::pos)
-(spec/def ::params (spec/keys ::warm-up-time ::run-to-time))
+(s/def ::rmachine #(and (not (contains? % :lambda))
+                        (not (contains? % :mu))
+                        (not (contains? % :N))))
 
-(spec/def ::w (spec/map-of keyword? ::pos))
-(spec/def ::portion ::pos)
-(spec/def ::JobType (spec/keys :req-un [::portion ::w])) 
+(s/def ::warm-up-time ::non-neg)
+(s/def ::run-to-time ::pos)
+(s/def ::params (s/keys ::warm-up-time ::run-to-time))
 
-(spec/def ::max-lines ::posint)
-(spec/def ::log boolean?)
-(spec/def ::report (spec/keys :req-un [::log?] :req-opt [::max-lines]))
+(s/def ::w (s/map-of keyword? ::pos))
+(s/def ::portion ::pos)
+(s/def ::JobType (s/keys :req-un [::portion ::w])) 
 
-;(spec/def ::number-of-simulations ::posint)
-(spec/def ::jobmix (spec/and (spec/map-of keyword? ::JobType) #(>= (count %) 1)))
-(spec/def ::machine (spec/or :rmachine ::rmachine :emachine ::ExpoMachine))
-(spec/def ::equipment (spec/or :machine ::machine :buffer ::Buffer))
-(spec/def ::line (spec/and (spec/map-of keyword? ::equipment) #(>= (count %) 3)))
-(spec/def ::Model (spec/keys :req-un [::line ::topology ::entry-point ::jobmix ::report ::params]))
+(s/def ::max-lines ::posint)
+(s/def ::log boolean?)
+(s/def ::report (s/keys :req-un [::log?] :req-opt [::max-lines]))
 
-(defn catch-up-machine!
-  "Advance the machine state so that its :future is in the future." 
-  [m now]
-  (let [[_ ftime] (:future m)]
-    (if (> ftime now)
-      m
-      (assoc m :future
-             (loop [fut (:future m)]
-               (let [[_ ftime] fut]
-                    (if (> ftime now) 
-                      fut
-                      (recur ((:mchain m))))))))))
+;(s/def ::number-of-simulations ::posint)
+(s/def ::jobmix (s/and (s/map-of keyword? ::JobType) #(>= (count %) 1)))
+(s/def ::machine (s/or :rmachine ::rmachine :emachine ::ExpoMachine))
+(s/def ::equipment (s/or :machine ::machine :buffer ::Buffer))
+(s/def ::line (s/and (s/map-of keyword? ::equipment) #(>= (count %) 3)))
+(s/def ::Model (s/keys :req-un [::line ::topology ::entry-point ::jobmix ::report ::params]))
+
+(s/fdef advance-clock ; POD the = in <= here is not desirable
+        :args (s/and (s/cat :model ::Model :new-clock ::non-neg)
+                     #(<= (-> (:model %) :clock) (:new-clock %)))
+        :ret ::Model)
 
 (defn advance-clock
-  "Move clock and machines forward in time."
+  "Move clock and machines forward in time. This is the only 
+   way in which the clock is advanced." 
   [model new-clock]
   (let [clock (:clock model)]
-    (cond
-      (> clock new-clock)
-      (throw (ex-info "Clock moving backwards!" {:clock clock :new-clock new-clock})),
-      (= clock new-clock)
+    (if (= clock new-clock)
       model
-      :else
       (as-> model ?m
-        (reduce (fn [mod m-name]
-                  (assoc-in mod [:line m-name]
-                            (catch-up-machine! (util/lookup model m-name) new-clock)))
-                ?m (:machines ?m))
+        (assoc ?m :last-clock (:clock ?m))
         (assoc ?m :clock new-clock)))))
 
-(defn job-updates!
-  "Advance through ups and downs collecting time for job.  
-   Return end time and future state, which should be a [:down <time>]."
-  [model job m]
-  (let [dur (util/job-requires model job m)
-        start (:clock model)] ; Assumes job starts now (startable or +job-moves-...)
-    (loop [decum dur
-           now start ; used as start of a working period to collect from
-           future (:future m)]
-      (let [[state dw_time] future]
-        (if (= :up state)
-          (recur decum dw_time ((:mchain m)))
-          (if (>= (- dw_time now) decum)
-            [(+ now decum) future]
-            (recur (- decum (- dw_time now))
-                   dw_time
-                   ((:mchain m)))))))))
+;;;  end-time = last time the machine starts up plus what remains to be achieved at that time.
+(defn end-time
+  "Scan through :up&down and determine when the job will end."
+  [model dur m]
+  (loop [not-achieved dur
+         now (:clock model)
+         up&down (drop-while #(< (nth % 2) now) (-> model :line m :up&down))]
+      (let [[_ event etime] (first (take 1 up&down))]
+        (if (= event :up) ; then machine was down; move on. 
+          (recur not-achieved etime (drop 1 up&down))
+          (if (> (- etime now) not-achieved) ; then there is enough here to get it done.
+            (+ now not-achieved) ; that's end-time. 
+            (recur (- not-achieved (- etime now)) ; otherwise add it in and continue
+                   etime
+                   (drop 1 up&down)))))))
+
+;;; N.B. I don't in-line this in expo-up&down nor call it from there because
+;;; I'd like to keep it possible to drop the head of the lazy-seq (BTW, that's
+;;; also the reason for the index number (first element of event vector.) 
+(defn expo-up&down-init-event
+  "Return the 3-element vector event structure for first event of a machine."
+  [lambda mu]
+  (let [up? (< (rand) (/ mu (+ lambda mu)))]
+    [0 (if up? :down :up) (stats/sample-exp 1 :rate (if up? lambda mu))]))
+
+(defn p-state-change
+  "Calculate probability of a flip = 1- e^(-rate t) : exponential CDF."
+  [t rate]
+  (- 1.0 (Math/pow Math/E (- (* rate t)))))
+
+;;; Choose jump times T using sampling on exponential with lambda or mu.
+;;; Use the probability of the p-up/down(T) to choose a new state (maybe same state)
+;;; Save state for next call.
+;;; This implements *time-dependent failure*, that is, breakdown and repair are
+;;; insensitive to time blocked or starved. The alternative is called *operation-dependent
+;;; failure* machine breakdowns cannot occur while blocked or starved. Semyon's book
+;;; notes that in practice the difference might be small (1-3%).
+(defn expo-up&down
+  "Return a lazy-seq generator for the up/down events of an exponential machine.
+   The events (and start arg) look like this: [<index number> (:up | :down) <time-point>]."
+  [lambda mu start]
+  (iterate (fn [[n event etime]]
+             [(inc n)
+              (if (= :up event) :down :up)
+              (let [up-now? (= event :up)
+                    rate (if up-now? lambda mu)
+                    some-num (rand)
+                    t-now etime]
+                (loop [T-delta (stats/sample-exp 1 :rate rate)]
+                  (if (< some-num (p-state-change T-delta rate))
+                    (+ t-now T-delta)
+                    (recur (+ T-delta
+                              (stats/sample-exp 1 :rate rate))))))])
+           start))
+
+(defn machine-future
+  "Return the next event for the machine."
+  [model m]
+  (let [now (:clock model)]
+     (first (take 1 (drop-while #(< (nth % 2) now) (-> model :line m :up&down))))))
 
 ;;; :aj - add-job    * not essential
 ;;; :ej - exit job   
@@ -165,98 +205,127 @@
 ;;; :st - starved
 ;;; :us - unstarved
 ;;;=============== Actions update the model =====================================
-(defn bring-machine-up
-  "Nothing to do here but (possible) loggging. The clock was advanced and 
-   machine futures updated by call to advance-clock in main-loop."
-  [model m-name]
-  (let [m (util/lookup model m-name)] ; diag
-    (when (util/up? m-name) (throw (ex-info "Machine is already up!" {:machine m-name})))
+(s/fdef bring-machine-up ; machine must be down
+        :args (s/and (s/cat :model ::Model :m keyword?)
+                     #(let [m (:m %)]
+                        (= :up (-> (:model %) :line m val val :future second)))))
+        
+(defn bring-machine-up 
+  "Update :future on machine and call advance-clock on old value.
+   This is necessary because otherwise a simulation can get stuck 
+   with the first machine down. (Otherwise does nothing.)"
+  [model m]
+  (let [[n event etime] (-> model :line m :future)
+        next-state (first (take 1 (drop-while #(<= (first %) n)
+                                              (-> model :line m :up&down))))]
     (-> model
-        #_(log/log {:act :up :m m-name :clk (:clock model)})))) ; not essential
+        (log/log {:clk etime :m m :act :up})
+        (assoc-in [:line m :future] next-state))))
+
+(s/fdef bring-machine-down ; machine must be up
+        :args (s/and (s/cat :model ::Model :m keyword?)
+                     #(let [m (:m %)]
+                        (= :down (-> (:model %) :line m val val :future second)))))
+
+(defn bring-machine-down
+  "Update :future on machine and call advance-clock on old value.
+   This is necessary because otherwise a simulation can get stuck 
+   with the first machine down. (Otherwise does nothing.)"
+  [model m]
+  (let [[n event etime] (-> model :line m :future)
+        next-state (first (take 1 (drop-while #(<= (first %) n)
+                                              (-> model :line m :up&down))))]
+    (-> model
+        (log/log {:clk etime :m m :act :down})
+        (assoc-in [:line m :future] next-state))))
 
 (defn add-job
   "Add a job to the line. Save the time it completes on the machine."
-  [model j m-name]
-  (reset! diag {:model model})
-  (let [[ends future] (job-updates! model
-                                   (assoc j :starts (:clock model))
-                                   (util/lookup model m-name))
-        job (as-> j ?j
-              (assoc ?j :enters (:clock model))
-              (assoc ?j :starts (:clock model))
-              (assoc ?j :ends ends))]
+  [model j m]
+  (let [now  (:clock model)
+        ends (end-time model (util/job-requires model j m) m)
+        job (-> j
+                (assoc :enters (:clock model))
+                (assoc :starts (:clock model))
+                (assoc :ends ends))]
     (-> model
-        (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends :clk (:clock model) :dets (log/detail model)}) ; not essential
+        (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends
+                  :clk (:clock model) :dets (log/detail model)}) ; not essential
         (update-in [:params :current-job] inc)
-        (assoc-in [:line m-name :status] job)
-        (assoc-in [:line m-name :future] future))))
+        (assoc-in [:line m :status] job)
+        (assoc-in [:line m :future] (machine-future model m)))))
+
+(s/fdef advance2machine ; Check that buffer has a job. 
+        :args (s/and (s/cat :model ::Model :m keyword?) ; jobs-move-to-down-machine?
+                     #(let [m (:m %)
+                            b-name (util/takes-from (:model %) m)]
+                        (-> (:model %) :line b-name val :holding)))
+        :ret ::Model)
 
 (defn advance2machine
   "Move a job off the buffer onto the machine. Compute time it completes."
-  [model m-name]
-;;;  (when (:status (util/lookup model m-name)) ; diag
-;;;    (throw (ex-info "Machine already busy!" {:machine m-name :model model})))
-  (let [b-name (util/takes-from model m-name)
-        b (util/lookup model b-name)
+  [model m]
+  (let [b-name (util/takes-from model m)
+        b (-> model :line b-name)
         job (-> (first (:holding b))
                 (assoc :starts (:clock model)))
-        [ends future] (job-updates! model job (util/lookup model m-name))
+        ends (end-time model (util/job-requires model job m) m)
         job (assoc job :ends ends)]
-;;;    (when (= :up (first future))
-;      (throw (ex-info "Expected an down future!" {:m-name m-name :model model})))
     (-> model 
-      (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b)) :clk (:clock model) :dets (log/detail model)})
-      (assoc-in  [:line m-name :status] job)
-      (assoc-in  [:line m-name :future] future)
-      (update-in [:line b-name :holding] #(vec (rest %))))))
+        (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b))
+                  :clk (:clock model) :dets (log/detail model)})
+        (assoc-in  [:line m :status] job)
+        (assoc-in  [:line m :future] (machine-future model m))
+        (update-in [:line b-name :holding] #(vec (rest %))))))
+
+(s/fdef advance2buffer
+        :args (s/and (s/cat :model ::Model :m keyword?)
+                     #(let [m (:m %)] ; second is to walk through [:machine [:emachine ...]]
+                        (-> (:model %) :line m val val :status)))
+        :ret ::Model)
 
 (defn advance2buffer
   "Move a job to buffer." 
-  [model m-name]
-  (let [m (util/lookup model m-name)
-        job (:status m)
-        b? (util/buffers-to model m-name)
-        now (:clock model)]
-;    (when (not b?) 
-;      (when (not= @+diag-expect-job+ (:id job))
-;        (throw (ex-info "Jobs out of order!" {:model model})))
-;    (swap! +diag-expect-job+ inc))
-;    (when (and b? (= (count (:holding b?)) (:N b?))) ; diag
-;      (throw (ex-info "buffer exceeds capacity!" {:model model :m-name :m-name})))
+  [model m]
+  (let [mach (-> model :line m)
+        job  (:status mach)
+        b?   (util/buffers-to model m)
+        Tend (:ends job)]
     (as-> model ?m
       (if b?
-        (log/log ?m {:act :bj :bf b? :j (:id job) :n (count (:holding (util/lookup model b?))) :clk now :dets (log/detail model)}) 
-        (log/log ?m {:act :ej :m (:name m) :j (:id job) :ent (:enters job) :clk now :dets (log/detail model)}))
-      (assoc-in ?m [:line m-name :status] nil)
-      (if b?
-        (update-in ?m [:line b? :holding] conj job)
-        ?m))))
+        (log/log ?m {:act :bj :bf b? :j (:id job) :n (count (-> ?m :line b? :holding))
+                     :clk Tend :dets (log/detail model)})
+        (log/log ?m {:act :ej :m (:name mach) :j (:id job) :ent (:enters job) 
+                     :clk Tend :dets (log/detail model)}))
+      (assoc-in ?m [:line m :status] nil)
+      (cond-> ?m
+        b? (update-in [:line b? :holding] conj job)))))
 
 ;;;=============== End of Actions ===============================================
 ;;;=============== Record-actions don't move jobs around. =======================
 (defn new-blocked
-  [model m-name]
+  [model m]
   (-> model
-      (log/log {:act :bl :m m-name :clk (:clock model) :dets (log/detail model)})
-      (update :blocked conj m-name)))
+      (log/log {:act :bl :m m :clk (:clock model) :dets (log/detail model)})
+      (update :blocked conj m)))
 
 (defn new-unblocked
-  [model m-name]
+  [model m]
   (-> model
-      (log/log {:act :ub :m m-name :clk (:clock model) :dets (log/detail model)})
-      (update :blocked disj m-name)))
+      (log/log {:act :ub :m m :clk (:clock model) :dets (log/detail model)})
+      (update :blocked disj m)))
 
 (defn new-starved
-  [model m-name]
+  [model m]
   (-> model 
-      (log/log {:act :st :m m-name :clk (:clock model) :dets (log/detail model)})
-      (update :starved conj m-name)))
+      (log/log {:act :st :m m :clk (:clock model) :dets (log/detail model)})
+      (update :starved conj m)))
 
 (defn new-unstarved
-  [model m-name]
+  [model m]
   (-> model
-      (log/log {:act :us :m m-name :clk (:clock model) :dets (log/detail model)})
-      (update :starved disj m-name)))
+      (log/log {:act :us :m m :clk (:clock model) :dets (log/detail model)})
+      (update :starved disj m)))
 ;;;=============== End of Record-actions ========================================
 (defn new-job
   "Randomly provide a new jobtype according to (:jobmix model)."
@@ -276,17 +345,28 @@
 (defn add-job? 
   "Return a record-action to start a job on an entry-point machine."
   [model]
-  (let [e (util/lookup model (:entry-point model))]
-    (when (not (util/occupied? e)) ; Doesn't matter if up or down.
+  (let [e (get (:line model) (:entry-point model))]
+    (when (and (not (util/occupied? e)) ; Doesn't matter if up or down.
+               (util/up? e))            ; 2018-01-27, I think it does now. 
       [{:time (:clock model) :fn add-job :args (list (new-job model) (:entry-point model))}])))
 
 (defn bring-machine-up?
   "Return an action to bring a down machine up."
   [model]
   (let [bring-up (filter #(util/down? %) (machines model))]
-    (when (not-empty bring-up) ; second of two places time advances.
-      (vec (map (fn [mn] {:time (second (:future mn)) :fn bring-machine-up :args (list (:name mn))})
+    (when (not-empty bring-up) 
+      (vec (map (fn [mn] {:time (nth (:future mn) 2)
+                          :fn bring-machine-up :args (list (:name mn))})
                 bring-up)))))
+
+(defn bring-machine-down?
+  "Return an action to bring an up machine down."
+  [model]
+  (let [bring-down (filter #(util/up? %) (machines model))]
+    (when (not-empty bring-down) 
+      (vec (map (fn [mn] {:time (nth (:future mn) 2)
+                          :fn bring-machine-down :args (list (:name mn))})
+                bring-down)))))
 
 (defn new-blocked?
   "Return record-actions to list newly blocked machines."
@@ -371,9 +451,9 @@
   "Return actions to move jobs onto machine. Can be done now." 
   [model]
   (let [entry-machine (:entry-point model)
-        clock (:clock model)
-        advance (filter #(and                
-                          (or (util/up? %) (:jm2dm model))
+        clock (:clock model)    
+        advance (filter #(and  ; Unless it was starved, :jm2dm doesn't matter.
+                          (or (util/up? %) (:jm2dm model)) 
                           (not (= (:name %) entry-machine))
                           (not (util/occupied? %))
                           (not (util/feed-buffer-empty? model %)))
@@ -382,18 +462,20 @@
       (vec (map (fn [mn] {:time clock :fn advance2machine :args (list (:name mn))}) advance)))))
 
 (defn runables
-  "Return a sequence of actions and record-actions and 
-   the time at which they can run."
+  "Return a sequence of all the actions and record-actions 
+   that can occur in the next time increment (all have = time)."
   [model]
   (let [all (concat ; none of the following modify the model. 
              (add-job? model)
              (bring-machine-up? model)
+             (bring-machine-down? model)
              (advance2buffer? model)
              (advance2machine? model) 
              (new-starved? model)  
              (new-unstarved? model)  
              (new-blocked? model)  
              (new-unblocked? model))]
+    (reset! diag {:all all})
     (when (not-empty all)
       (let [min-time (apply min (map :time all))]
         (filter #(= (:time %) min-time) all)))))
@@ -401,57 +483,16 @@
 (defn run-action
   "Run a single action, returning the model."
   [model act]
-  ;(reset! diag {:where 'run-action :act act})
   (apply (partial (:fn act) model) (:args act)))
-
-(defn run-actions
-  "Run a list of actions in the order they appear in actions; 
-   update the model while doing so."
-  [model actions]
-  (as-> model ?m
-    (reduce (fn [m a] (run-action m a)) ?m actions)
-    #_(reset! diag ?m)))
-
-(defn p-state-change
-  "Calculate probability of a flip = 1- e^(-rate t) : exponential CDF."
-  [t rate]
-  (- 1.0 (Math/pow Math/E (- (* rate t)))))
-
-;;; Choose jump times T using sampling on exponential with lambda or mu.
-;;; Use the probability of the p-up/down(T) to choose a new state (maybe same state)
-;;; Save state for next call.
-;;; This implements *time-dependent failure*, that is, breakdown and repair are
-;;; insensitive to time blocked or starved. The alternative is called *operation-dependent
-;;; failure* machine breakdowns cannot occur while blocked or starved. Semyon's book
-;;; notes that in practice the difference might be small (1-3%). 
-(defn exponential-up&down
-  "Return a function that, when called, returns the next event and time 
-   on a markov chain representing an exponential machine."
-  [lambda mu]
-  (let [up? (atom (< (rand) (/ mu (+ lambda mu)))) 
-        T (atom (s/sample-exp 1 :rate (if @up? lambda mu)))
-        T-delta (atom 0.0)]
-    (fn []
-      (loop [up-now? @up? 
-             t-now @T]
-        (let [t-delt (s/sample-exp 1 :rate (if up-now? mu lambda))]
-          (if (< (rand) (p-state-change @T-delta (if up-now? lambda mu)))
-            (let [answer [(if up-now? :down :up) t-now]]
-              (reset! T-delta 0.0)
-              (swap! T + t-delt)
-              (swap! up? not)
-              answer)
-            (do (swap! T-delta + t-delt)
-                (recur @up? @T))))))))
 
 (defn spec-check-model
   "Do clojure.spec-based testing of the model."
   [model]
-  (if (spec/valid? ::Model model)
+  (if (s/valid? ::Model model)
     model
     (throw
      (ex-info "The model is not well-formed:"
-              {:reason (spec/explain ::Model model)}))))
+              {:reason (s/explain ::Model model)}))))
 
 (defn rand-range
   [[lbound ubound]]
@@ -460,12 +501,15 @@
 (defn preprocess-equip
   [[k e]]
   (cond (instance? ExpoMachine e)
-        (as-> e ?m 
-          (assoc ?m :mchain (exponential-up&down (:lambda ?m) (:mu ?m)))
-          (assoc ?m :future ((:mchain ?m)))
-          (assoc ?m :name k)
-          (assoc ?m :W (if (number? (:W ?m)) (:W ?m) (rand-range (:bounds (:W ?m)))))
-          [k ?m]),
+        (let [lambda (:lambda e)
+              mu     (:mu     e)
+              first-event (expo-up&down-init-event lambda mu)]
+          (as-> e ?m 
+            (assoc ?m :name k)
+            (assoc ?m :up&down (expo-up&down lambda mu first-event))
+            (assoc ?m :future first-event)
+            (assoc ?m :W (if (number? (:W ?m)) (:W ?m) (rand-range (:bounds (:W ?m)))))
+            [k ?m])),
         (instance? ReliableMachine e)
         (as-> e ?m 
           (assoc ?m :future [:down Double/POSITIVE_INFINITY])
@@ -475,7 +519,7 @@
         (as-> e ?b
           (assoc ?b :holding [])
           (assoc ?b :name k)
-          [k ?b])
+          [k ?b]),
         :else [k e]))
 
 (defn preprocess-model
@@ -489,8 +533,8 @@
       (update-in ?m [:report] #(if (empty? %) {:log? false :line-cnt 0 :max-lines 0} (assoc % :line-cnt 0)))
       (assoc ?m :jm2dm jm2dm)
       (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
-      (assoc ?m :machines (vec (filter #(machine? (util/lookup model %)) (:topology model))))
-      (assoc ?m :buffers  (vec (filter #(buffer?  (util/lookup model %)) (:topology model))))
+      (assoc ?m :machines (filterv #(machine? (-> model :line %)) (:topology model)))
+      (assoc ?m :buffers  (filterv #(buffer?  (-> model :line %)) (:topology model)))
       (assoc ?m :clock 0.0)
       (assoc ?m :blocked #{})
       (assoc ?m :starved #{})
@@ -564,17 +608,17 @@
   (let [mach-effs (zipmap
                    (:machines model)
                    (map (fn [mn]
-                          (let [m (util/lookup model mn)]
+                          (let [m (-> model :line mn)]
                             (/ (:mu m)  (+ (:lambda m) (:mu m)))))
                         (:machines model))),
         virt-processing
         (zipmap
          (:machines model)
-         (map (fn [mn]
+         (map (fn [m]
                 (apply + (map (fn [jt]
                                 (* (:portion (jt (:jobmix model)))
-                                   (/ 1.0 (mn mach-effs))
-                                   (util/job-requires model (map->Job {:type jt}) (util/lookup model mn))))
+                                   (/ 1.0 (m mach-effs))
+                                   (util/job-requires model (map->Job {:type jt}) m)))
                               (keys (:jobmix model)))))
               (:machines model)))]
     (assoc res :computed-residence-time
@@ -583,17 +627,17 @@
             (map (fn [jtype]
                    (let [job (map->Job {:type jtype})]
                      (+  (apply + ; processing time
-                                (map (fn [mn] (* (/ 1.0 (mn mach-effs))
-                                                 (+ 1.0 (mn (:blocked res)))
-                                                 (util/job-requires model job (util/lookup model mn))))
+                                (map (fn [m] (* (/ 1.0 (m mach-effs))
+                                                 (+ 1.0 (m (:blocked res)))
+                                                 (util/job-requires model job m)))
                                      (:machines model)))
                          (apply + ; wait time. 
-                                (map (fn [mn]
-                                       (if (= mn (:entry-point model))
+                                (map (fn [m]
+                                       (if (= m (:entry-point model))
                                          0 ; 0.5 (below) is half of vjob being worked.
-                                         (* (+ 0.5 ((util/takes-from model mn) (:avg-buffer-occupancy res)))
-                                            (mn virt-processing)
-                                            (+ 1.0 (mn (:blocked res))))))
+                                         (* (+ 0.5 ((util/takes-from model m) (:avg-buffer-occupancy res)))
+                                            (m virt-processing)
+                                            (+ 1.0 (m (:blocked res))))))
                                      (:machines model))))))
                  (keys (:jobmix model)))))))
 
@@ -617,11 +661,35 @@
 
 (def +kill-all+ (atom false))
 
-(defn main-loop 
-  "Run one or more simulations."
-  [model & {:keys [out-stream] :or {out-stream *out*}}]
+(defn end-main-loop?
+  [model job-end time-end]
+  (not (or (and (:run-to-job (:params model))
+                (<= (:current-job (:params model)) job-end))
+           (and (:run-to-time (:params model))
+                (<= (:clock model) time-end)))))
+
+(defn main-loop-loop
+  "Body of action loop that does the work"
+  [model job-end time-end]
   (reset! +kill-all+ false)
-  (binding [*out* out-stream]
+  (loop [model (assoc model :last-clock -1.0)]
+    (if (end-main-loop? model job-end time-end)
+      (assoc-in model [:params :status] :normal-end)
+      (let [actions  (when (not @+kill-all+) (runables model))
+            next-clk (when actions (:time (first (remove #(= :bl (:act %)) actions))))]
+        (if (empty? actions) 
+          (assoc-in model [:params :status] :no-runables)
+          (as-> model ?m
+            (reduce #(run-action %1 %2) ?m actions)
+            (advance-clock ?m next-clk)
+            (log/push-log  ?m)
+            (recur ?m)))))))
+
+(defn main-loop-multi
+  "Run several simulations."
+  [model out-stream]
+  (binding [*out* out-stream
+            *print-length* 10]
     (print "#_")
     (pprint (log/pretty-model model))
     (let [sims ; a seq of futures.
@@ -631,22 +699,40 @@
                (let [start (System/currentTimeMillis)
                      job-end  (:run-to-job  (:params model))
                      time-end (:run-to-time (:params model))]
-                 (as-> model ?m
-                   (preprocess-model ?m)
-                   (binding [log/*log-steady* (atom (log/steady-form ?m))] ; create a log for computations.
-                     (loop [model ?m]
-                       (if-let [actions (when (not @+kill-all+) (not-empty (runables model)))]
-                         (as-> model ?m1 ; blocking does not advance the clock 
-                           (log/push-log  ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
-                           (advance-clock ?m1 (:time (first (remove #(= :bl (:act %)) actions))))
-                           (if (or (and (:run-to-job (:params ?m1))
-                                        (<= (:current-job (:params ?m1)) job-end))
-                                   (and (:run-to-time (:params ?m1))
-                                        (<= (:clock ?m1) time-end)))
-                             (recur (run-actions ?m1 actions))
-                             (assoc-in ?m1 [:params :status] :normal-end)))
-                         (assoc-in model [:params :status] :no-runables)))
-                     ;;(println @log/*log-steady*)
-                     (postprocess-model ?m n start)))))) ; Returns a result object
+                   (as-> model ?m
+                       (preprocess-model ?m)
+                       (binding [log/*log-steady* (atom (log/steady-form ?m))] ; create a log for computations.
+                         (-> ?m
+                         (main-loop-loop job-end time-end)
+                         (postprocess-model n start))))))) ; Returns a result object
            (range (or (:number-of-simulations model) 1)))]
       (log/output-sims model sims))))
+  
+(defn main-loop-once
+  "Run one simulation."
+  [model out-stream]
+  (binding [*out* out-stream
+            *print-length* 10]
+    (print "#_")
+    (pprint (log/pretty-model model))
+    (let [start (System/currentTimeMillis)
+          job-end  (:run-to-job  (:params model))
+          time-end (:run-to-time (:params model))]
+      (as-> model ?m
+        (preprocess-model ?m)
+        (binding [log/*log-steady* (atom (log/steady-form ?m))] ; create a log for computations.
+          (as-> ?m ?m2
+              (main-loop-loop ?m2 job-end time-end)
+              (postprocess-model ?m2 1 start))) ; Returns a result object
+        (do (print "#_") ?m)
+        (-> ?m (dissoc :jobmix) pprint)))))
+
+(defn main-loop
+  "Run one or more simulations."
+  [model & {:keys [out-stream] :or {out-stream *out*}}]
+  (let [n (:number-of-simulations model)]
+    (if (or (not n) (= n 1))
+      (main-loop-once  model out-stream)
+      (main-loop-multi model out-stream))))
+
+(stest/instrument)

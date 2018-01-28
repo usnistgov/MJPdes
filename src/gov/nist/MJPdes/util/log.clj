@@ -1,34 +1,39 @@
 (ns gov.nist.MJPdes.util.log
   "Data collection, editing, and printing of DES events"
   (:require
-   [clojure.spec.alpha :as spec]
+   [clojure.spec.alpha :as s]
    [clojure.pprint :refer (cl-format pprint pp)]
    [gov.nist.MJPdes.util.utils :as util :refer (ppp ppprint)]))
 
 (def ^:dynamic *log-steady* "Collects essential data for steady-state calculations." nil)
+(def ^:private diag (atom nil))
 
 (defn detail
   "Return a map of operation details including what jobs are in what machines or buffers."
   [model]
-  (let [bufs (:buffers model)
-        machines (:machines model)]
-    {:run
-     (zipmap
-      machines
-      (map (fn [mach-key]
-             (-> model :line mach-key :status :id))
-           machines))
-     :bufs
-     (zipmap
-      bufs
-      (map (fn [buf-key]
-             (mapv :id (-> model :line buf-key :holding)))
-           bufs))}))
+  (when (-> model :report :job-detail?)
+    (let [bufs (:buffers model)
+          machines (:machines model)]
+      {:run
+       (zipmap
+        machines
+        (map (fn [mach-key]
+               (-> model :line mach-key :status :id))
+             machines))
+       :bufs
+       (zipmap
+        bufs
+        (map (fn [buf-key]
+               (mapv :id (-> model :line buf-key :holding)))
+             bufs))})))
 
 (defn log
   "Add to the log-buffer. On a clock tick it will be cleaned and written to log."
   [model log-map]
-  (update model :log-buf #(conj % log-map)))
+  (let [keep? (or (-> model :report :up&down?)
+                  (not (#{:up :down} (:act log-map))))]
+    (cond-> model
+      keep? (update :log-buf #(conj % log-map)))))
 
 (defn clean-log-buf
   "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
@@ -54,12 +59,12 @@
         (rem-fn [:st :us] sm ?log)
         ?log))))
 
-(spec/def ::act keyword?)
-(spec/def ::clk float?)
-(spec/def ::msg (spec/keys :req-un [::clk ::act]))
-(spec/def ::buf (spec/coll-of ::msg))
+(s/def ::act keyword?)
+(s/def ::clk float?)
+(s/def ::msg (s/keys :req-un [::clk ::act]))
+(s/def ::buf (s/coll-of ::msg))
 ;;; Call it with a collection of messages all happening at the same time.  
-(spec/fdef clean-log-buf :args (spec/and (spec/cat :buf ::buf)
+(s/fdef clean-log-buf :args (s/and (s/cat :buf ::buf)
                                          #(let [clk (-> % :args :buf first :clk)]
                                             (every? (fn [msg] (== clk (:clk %)))
                                                     (-> % :args :buf)))))
@@ -184,29 +189,35 @@
             :ub (block-  % msg)
             :st (starve+ % msg)
             :us (starve- % msg)
-            :aj @*log-steady*)))
+            :aj @*log-steady*
+            :up @*log-steady*
+            :down @*log-steady*)))
 
 (declare print-now? pretty-buf print-lines)
 (defn push-log
   "Clean up the :log-buf and record (add-compute-log!) all msgs accumulated in it
    since the last clock tick. The :log-buf has msgs from the next clock tick,
    so you have to sort them and only push the old ones."
-  [model up-to-clk]
-  ;(doall (map println (-> model :log-buf)))
-  ;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf. 
-  (let [parts {:now   (filter #(< (:clk %) up-to-clk) (-> model :log-buf))
-               :later (remove #(< (:clk %) up-to-clk) (-> model :log-buf))}
-        clean-buf (clean-log-buf (:now parts))
-        warm-up (-> model :params :warm-up-time)]
-    (when (> up-to-clk warm-up)
-      (doall (map #(when (> (:clk %) warm-up)
-                     (add-compute-log! %))
-                  clean-buf)))
-    (as-> model ?m
-      (if (print-now? model parts up-to-clk)
-        (print-lines ?m clean-buf)
-        ?m)
-      (assoc ?m :log-buf (vec (:later parts))))))
+  [model]
+  ;;(doall (map println (-> model :log-buf)))
+  ;;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf.
+    (let [now    (:clock model)
+          before (:last-clock model)]
+    (if (> now before) ; Time to log!
+      (let [parts {:now   (filter #(<= (:clk %) now) (-> model :log-buf))  ; yes <=, not <. 
+                   :later (remove #(<= (:clk %) now) (-> model :log-buf))}
+            clean-buf     (cond->> (:now parts)
+                            (not (:job-detail? model)) (mapv #(dissoc % :dets))
+                            true (clean-log-buf))
+            warm-up (-> model :params :warm-up-time)]
+        (when (>= now warm-up)
+          (doall (map #(when (> (:clk %) warm-up)
+                         (add-compute-log! %))
+                      clean-buf)))
+        (cond-> model
+          (print-now? model parts now) (print-lines clean-buf)
+          true (assoc :log-buf (vec (:later parts)))))
+      model)))
 
 (defn print-lines
   "Actually print the lines, updating (-> model :report :line-cnt)."
@@ -214,7 +225,6 @@
   (let [fmt (str "{:clk" (-> model :params :time-format) "~{ ~A~}}~%")
         buf (pretty-buf model clean-buf)
         line-num (atom (-> model :report :line-cnt))]
-    (when (== 0 (-> model :report :line-cnt)) (println "["))
     (run! (fn [line]
             (cl-format *out* fmt
                        (:clk line)
@@ -224,16 +234,10 @@
                            flatten))
             (swap! line-num inc))
           buf)
-    (let [model (as-> model ?m
-                  ;; :diag-log-buf used in core.clj testing. 
-                  (if (-> ?m :report :diag-log-buf?)
-                    (update-in ?m [:diag-log-buf] #(into % buf))
-                    ?m)
-                  (update-in ?m [:report :line-cnt] #(+ % (count buf))))]
-      (when (>= (-> model :report :line-cnt)
-                (-> model :report :max-lines))
-        (println "]"))
-      model)))
+    (cond-> model 
+      ;; :diag-log-buf used in core.clj testing. 
+      (-> model :report :diag-log-buf?) (update-in [:diag-log-buf] #(into % buf))
+      true (update-in [:report :line-cnt] #(+ % (count buf))))))
 
 ;;;{:residence-sum 0.0,
 ;;; :njobs 0,
@@ -248,7 +252,7 @@
                   (:machines model)))
     (into ?r (map (fn [b] [(:name b) (assoc (zipmap (range (inc (:N b))) (repeat (+ 2 (:N b)) 0.0))
                                             :lastclk (-> model :params :warm-up-time))])
-                  (map #(util/lookup model %) (:buffers model))))))
+                  (map #(-> model :line %) (:buffers model))))))
 
 ;;; Examples
 ;;;   r = {... :b2 {0 0.0, 1 0.0, 2 0.0, 3 0.0, 4 0.0, 5 0.0 :lastclk 0.0}},
@@ -274,11 +278,11 @@
   [r o]
   (assoc-in r [(:m o) :bs] (:clk o)))
 
-(spec/def ::njobs (spec/and integer? #(>= % 0)))
-(spec/def ::residence-sum (spec/and number? #(>= % 0)))
-(spec/def ::steady (spec/keys :req-un [::residence-sum ::njobs]))
-(spec/fdef block+
-           :args (spec/cat :steady ::steady :msg ::msg)
+(s/def ::njobs (s/and integer? #(>= % 0)))
+(s/def ::residence-sum (s/and number? #(>= % 0)))
+(s/def ::steady (s/keys :req-un [::residence-sum ::njobs]))
+(s/fdef block+
+           :args (s/cat :steady ::steady :msg ::msg)
            :fn (fn [r o] (not (:bs ((:m o) r))))) ; not blocking twice 
 
 (defn block- ; action is :ub
@@ -295,10 +299,9 @@
   [r o]
   (assoc-in r [(:m o) :ss] (:clk o)))
 
-(spec/fdef starve+
-           :args (spec/cat :steady ::steady :msg ::msg)
-           :fn (fn [r o] (not (:ss ((:m o) r))))) ; not starving twice 
-
+(s/fdef starve+
+           :args (s/cat :steady ::steady :msg ::msg)
+           :fn (fn [r o] (not (:ss ((:m o) r)))))
 
 (defn starve- ; action is :us
   "Stop clock on machine for starving."
@@ -318,12 +321,12 @@
 
 ;;;============= Pretty printing ===================================================
 (defn print-now?
-  "Returns true if it is time to add to the log."
-  [model parts up-to-clk]
+  "Returns true if it is time to print log entries."
+  [model parts now]
   (and (-> model :report :log?)
        (not-empty (:now parts))
-       (> (-> model :report :max-lines) (-> model :report :line-cnt))
-       (> up-to-clk (-> model :params :warm-up-time))))
+       (>  (-> model :report :max-lines) (-> model :report :line-cnt))
+       (>= now (-> model :params :warm-up-time))))
 
 (defn shorten-msg-floats
   [model msg]
@@ -356,7 +359,9 @@
           (= :bl (:act msg)) (read-string (cl-format nil "~A-blocked"      m)),
           (= :ub (:act msg)) (read-string (cl-format nil "~A-unblocked"    m)),
           (= :st (:act msg)) (read-string (cl-format nil "~A-starved"      m)),
-          (= :us (:act msg)) (read-string (cl-format nil "~A-unstarved"    m)))))
+          (= :us (:act msg)) (read-string (cl-format nil "~A-unstarved"    m)),
+          (= :up (:act msg)) (read-string (cl-format nil "~A-up"           m)),
+          (= :down (:act msg)) (read-string (cl-format nil "~A-down"       m)))))
 
 (defn prettyfy-msg
   "Interpret/translate the SCADA log. (Give pretty-fied pn names to MJPdes output.)" 
@@ -402,6 +407,7 @@
                                          (dissoc :name)
                                          (dissoc :status)
                                          (dissoc :mchain)
+                                         (dissoc :up&down)
                                          (dissoc :holding))))
                        line
                        (keys line)))))
