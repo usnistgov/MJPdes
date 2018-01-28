@@ -3,9 +3,9 @@
 A discrete event simulation engine for mixed-model asynchronous serial production lines
 
 This software supports simulation of mixed-model and multi-job production systems.
-Multi-job production is a specialization of mixed-model production systems, are production systems
-where jobs of specified job types flow through all workcenters (machines) of the main line, but the
-processing time at each workcenter may differ according to the job's type.
+Multi-job production is a specialization of mixed-model production systems
+where jobs of specified job types flow through all workcenters (machines) of the main line, 
+but the processing time at each workcenter may differ according to the job's type.
 
 The terminology used on this page mostly follows that of reference [1]. 
 
@@ -16,7 +16,7 @@ Job types describe the amount of work required at each machine. The portion of e
 be produced is specified and jobs of those types are sent to the first machine in the line in a
 random sequence.
 
-The program reports:
+The program can report:
  * Starvation and blocking at each machine. (The first machine cannot starve; the last machine cannot be blocked.)
  * Throughput
  * The bottleneck machine

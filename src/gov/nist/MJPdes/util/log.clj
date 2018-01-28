@@ -407,6 +407,7 @@
                                          (dissoc :name)
                                          (dissoc :status)
                                          (dissoc :mchain)
+                                         (dissoc :up&down)
                                          (dissoc :holding))))
                        line
                        (keys line)))))
