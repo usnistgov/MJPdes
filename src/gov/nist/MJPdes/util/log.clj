@@ -36,28 +36,25 @@
       keep? (update :log-buf #(conj % log-map)))))
 
 (defn clean-log-buf
-  "Return a vector of log msgs with superfluous block/unblock starve/unstarve removed.
-   Such msgs are superfluous if they happen at the same time."
-  [buf]
-  (let [rem-fn (fn [acts ms log]
-                 (reduce
-                  (fn [log m]
-                    (reduce (fn [log act] (remove #(and (= (:m %) m) (= (:act %) act)) log))
-                            log acts))
-                  log ms))
-        bms (distinct (map :m (filter #(= (:act %) :bl) buf)))
-        sms (distinct (map :m (filter #(= (:act %) :st) buf)))]
-    (as-> buf ?log
-      (if-let [bm (map :m (filter (fn [msg] (and (= (:act msg) :ub)
-                                                 (some #(= (:m msg) %) bms)))
-                                  ?log))]
-        (rem-fn [:bl :ub] bm ?log)
-        ?log)
-      (if-let [sm (map :m (filter (fn [msg] (and (= (:act msg) :us)
-                                                 (some #(= (:m msg) %) sms)))
-                                  ?log))]
-        (rem-fn [:st :us] sm ?log)
-        ?log))))
+  "Remove acts that reverse themselves (i.e. :bl/:ub :st/us) in the argument collection.
+   N.B. Assumes a lot about the input: (1) all acts have same :time, (2) no more than one 
+   :bl, :st, :ub, and :us allowed per machine in the argument."
+  [acts]
+  (as-> acts ?a
+       (group-by :m ?a)
+       (mapcat (fn [[m acts]]
+                 (->> acts
+                      (group-by #(cond (#{:bl :ub} (:act %)) :bl-ub
+                                       (#{:st :us} (:act %)) :st-us
+                                       :else :other))
+                      (reduce (fn [accum [k v]]
+                                (if (and (== (count v) 2)
+                                         (or (= k :bl-ub) (= k :st-us)))
+                                  accum
+                                  (conj accum v)))
+                              [])))
+               ?a)
+       (reduce #(into %1 %2) [] ?a)))
 
 (s/def ::act keyword?)
 (s/def ::clk float?)
@@ -65,133 +62,163 @@
 (s/def ::buf (s/coll-of ::msg))
 ;;; Call it with a collection of messages all happening at the same time.  
 (s/fdef clean-log-buf :args (s/and (s/cat :buf ::buf)
-                                         #(let [clk (-> % :args :buf first :clk)]
-                                            (every? (fn [msg] (== clk (:clk %)))
-                                                    (-> % :args :buf)))))
-
-;;; POD This will need some work as lines get more sophisticated. 
-(defn upstream?
-  "Returns true if equip1 is upstream of equip2"
-  [model equip1 equip2]
-  (let [top ^clojure.lang.PersistentVector (:topology model)]
-    (and (not= equip1 equip2)
-         (some #(= % equip1) top)
-         (some #(= % equip2) top)
-         (< (.indexOf top equip1)
-            (.indexOf top equip2)))))
+                                   #(let [clk (-> % :args :buf first :clk)]
+                                      (every? (fn [msg] (== clk (:clk %)))
+                                              (-> % :args :buf)))))
 
 (defn exception?
   [act]
   (some #(= act %) [:st :us :bl :ub]))
 
 (defn sort-blocked
-  "AFAIK, blocked appear alone (because you were working, 
-   you finish and suddenly, uh oh)."
-  [model msg1 msg2]
-  true)
+  "In BAS, block after ending; In BBS block before starting."
+  [model [msg1 msg2 answer]]
+  (if (not (nil? answer))
+    [msg1 msg2 answer]
+    (let [m1 (:m msg1)
+          m2 (:m msg2) ; model below for easier testing.
+          m1>m2? (util/next-machine? model m1 m2) ; work flows from m1 to m2. 
+          same? (= m1 m2)
+          m2>m1? (util/next-machine? model m1 m1)
+          act1 (:act msg1)
+          act2 (:act msg2)
+          BBS? (if (= act1 :bl)
+                 (= (-> model :line m1 :discipline) :BBS)
+                 (= (-> model :line m2 :discipline) :BBS))
+          BAS? (not BBS?)]
+      [msg1 msg2 (cond ; BAS, block before ending
+                   (and same? BAS? (= act1 :bl) (= act2 :bj)) true,
+                   (and same? BAS? (= act2 :bl) (= act1 :bj)) false,
+                       ; BBS block before starting
+                   (and same? BBS? (= act1 :bl) (#{:aj :sm} act2)) true,
+                   (and same? BBS? (= act2 :bl) (#{:aj :sm} act1)) false,
+                       ; Block before downstream
+                   (and (= act1 :bl)) true,
+                   (and (= act2 :bl)) false,
+                   :else nil)])))
 
 (defn sort-unblocked
   "return true if msg1 should come before msg2"
-  [model msg1 msg2]
-    [model msg1 msg2]
-  (let [ep1 (or (:m msg1) (:bf msg1))
-        ep2 (or (:m msg2) (:bf msg2)) ; model below for easier testing.
-        up? (and model ep1 ep2 (upstream? model ep1 ep2))
-        same? (= ep1 ep2)
-        down? (and (not up?) (not same?))
-        act1 (:mjpact msg1)
-        act2 (:mjpact msg2)]
-    (cond ;; Do downtream before unblocking.
-          (and down? (or (= act1 :ej) (= act1 :sm)) (= act2 :ub)) true,
-          (and   up? (or (= act2 :ej) (= act2 :sm)) (= act1 :ub)) false,
-          ;; unblock before starting or moving off 
-          (and same? (= act1 :ub) (or (= act2 :sm) (= act2 :aj) (= act2 :bj))) true,
-          ;; move-off before starting
-          (and same? (or (= act1 :bj) (= act1 :ej)) (or (= act2 :sm) (= act2 :aj))) true,
-          ;; If neither of them are exceptional, do downstream first
-          (and down? (not (exception? act1)) (not (exception? act2))) true,
-          (and   up? (not (exception? act1)) (not (exception? act2))) false,
-          :else false)))
+  [model [msg1 msg2 answer]]
+  (if (not (nil? answer))
+    [msg1 msg2 answer]
+    (let [m1 (:m msg1)
+          m2 (:m msg2) ; model below for easier testing.
+          m1>m2? (util/next-machine? model m1 m2)
+          same? (= m1 m2)
+          m2>m1? (util/next-machine? model m2 m1)
+          act1 (:act msg1)
+          act2 (:act msg2)
+          BBS? (if (= act1 :ub)
+                 (= (-> model :line m1 :discipline) :BBS)
+                 (= (-> model :line m2 :discipline) :BBS))]
+      [msg1 msg2 (cond ; BBS, unblock before starting
+                   (and BBS? same? (= act1 :ub) (#{:aj :sm} act2)) true,
+                   (and BBS? same? (= act2 :ub) (#{:aj :sm} act1)) false,
+                   ;; BBS, downstream starts before unblocking. 
+                   (and BBS? m1>m2?   (= act1 :ub) (= act2 :sm)) false,
+                   (and BBS? m2>m1? (= act1 :sm) (= act2 :ub)) true,
+                   ;; unblock before starting or moving off     
+                   (and same? (= act1 :ub) (#{:sm :aj :bj :ej} act2)) true,
+                   (and same? (= act2 :ub) (#{:sm :aj :bj :ej} act1)) false,
+                   :else nil)])))
 
 (defn sort-starved
   "return true if msg1 should come before msg2"
-  [model msg1 msg2]
-    [model msg1 msg2]
-  (let [act1 (:mjpact msg1)
-        act2 (:mjpact msg2)]
-    (cond (and (= act1 :ej) (= act2 :st)) true,
-          true false)))
+  [model [msg1 msg2 answer]]
+  (if (not (nil? answer))
+    [msg1 msg2 answer]
+    (let [m1 (:m msg1) 
+          m2 (:m msg2) ; model below for easier testing.
+          m1>m2? (util/next-machine? model m1 m2)
+          same? (= m1 m2)
+          m2>m1? (util/next-machine? model m2 m1)
+          act1 (:act msg1)
+          act2 (:act msg2)]
+      [msg1 msg2 (cond ;; Do upstream before starving.
+                   (and   m1>m2? (#{:ej :sm :aj} act1) (= act2 :st)) true,
+                   (and   m1>m2? (#{:ej :sm :aj} act2) (= act1 :st)) false,
+                   ;; end job before starving
+                   (and same? (#{:bj :ej} act1) (= act2 :st)) true,
+                   (and same? (#{:bj :ej} act2) (= act1 :st)) false,
+                   :else nil)])))
 
 (defn sort-unstarved
   "return true if msg1 should come before msg2"
-  [model msg1 msg2]
-  (let [ep1 (or (:m msg1) (:bf msg1))
-        ep2 (or (:m msg2) (:bf msg2)) ; model below for easier testing.
-        up? (and model ep1 ep2 (upstream? model ep1 ep2))
-        same? (= ep1 ep2)
-        down? (and (not up?) (not same?))
-        act1 (:mjpact msg1)
-        act2 (:mjpact msg2)]
-    (cond ;; Do upstream before unstarving.
-          (and up?   (or (= act1 :bj) (= act1 :aj)) (= act2 :us)) true,
-          (and down? (or (= act2 :bj) (= act2 :aj)) (= act1 :us)) false,
-          ;; unstarve before starting 
-          (and same? (= act1 :us) (= act2 :sm)) true,
-          ;; move-off before starting
-          (and same? (= act1 :bj) (or (= act2 :sm) (= act2 :aj))) true,
-          ;; If neither of them are exceptional, do upstream first
-          (and down? (not (exception? act1)) (not (exception? act2))) false,
-          (and   up? (not (exception? act1)) (not (exception? act2))) true,
-          :else false)))
+  [model [msg1 msg2 answer]]
+  (if (not (nil? answer))
+    [msg1 msg2 answer]
+    (let [m1 (:m msg1)
+          m2 (:m msg2) ; model below for easier testing.
+          m1>m2? (util/next-machine? model m1 m2)
+          same? (= m1 m2)
+          m2>m1? (util/next-machine? model m2 m1)
+          act1 (:act msg1)
+          act2 (:act msg2)]
+      [msg1 msg2 (cond ;; Do upstream before unstarving.
+                   (and m1>m2? (#{:bj :aj} act1) (= act2 :us)) true,
+                   (and m2>m1? (#{:bj :aj} act2) (= act1 :us)) false,
+                   ;; unstarve before starting 
+                   (and same? (= act1 :us) (= act2 :sm)) true,
+                   (and same? (= act2 :us) (= act1 :sm)) false,
+                   :else nil)])))
 
 (defn sort-ordinary
   "return true if msg1 should come before msg2"
+  [model [msg1 msg2 answer]]
+  (if (not (nil? answer))
+    [msg1 msg2 answer]
+    (let [m1 (:m msg1)
+          m2 (:m msg2) ; model below for easier testing.
+          up? (util/upstream? model m1 m2)
+          same? (= m1 m2)
+          down? (and (not up?) (not same?))
+          act1 (:act msg1)
+          act2 (:act msg2)]
+      [msg1 msg2 (cond up?   true
+                       down? false
+                       (and (= act1 :ej) (= act2 :sm)) true, 
+                       (and (= act1 :bj) (#{:aj :sm} act2)) true,
+                       :else false)])))
+
+;;; POD It is not obvious that this produces a total ordering!
+;;; Each of the sort-x except sort-ordinary returns [msg1 msg2 (true | false | nil)]
+;;; If another in the line is called and this third element is true or false it
+;;; passes through the argument, otherwise it returns another triple, either answering
+;;; true/false, or passing through with a nil. 
+(defn sort-two-messages
+  "Sort a collection of contemporaneous messages into a good logical order."
   [model msg1 msg2]
-    (let [ep1 (or (:m msg1) (:bf msg1))
-        ep2 (or (:m msg2) (:bf msg2)) ; model below for easier testing.
-        up? (and model ep1 ep2 (upstream? model ep1 ep2))
-        same? (= ep1 ep2)
-        down? (and (not up?) (not same?))
-        act1 (:mjpact msg1)
-        act2 (:mjpact msg2)]
-      (cond up?   true
-            down? false
-            (and (= act1 :ej) (= act2 :sm)) true
-            (and (= act1 :bf) (= act2 :aj)) true
-            (and (= act1 :bj) (= act2 :sm)) true
-            true false)))
+  (let [msgs [msg1 msg2 nil]
+        res (cond->> msgs
+              (some #(= :bl (:act %)) msgs) (sort-blocked   model)
+              (some #(= :ub (:act %)) msgs) (sort-unblocked model)
+              (some #(= :st (:act %)) msgs) (sort-starved   model)
+              (some #(= :us (:act %)) msgs) (sort-unstarved model)
+              true                          (sort-ordinary  model))]
+    (nth res 2)))
 
 (defn sort-messages
-  "Return the messages sorted in a good chronological order."
   [model msgs]
-  (let [mtable (apply sorted-map
-                      (mapcat (fn [[k v]] (vector k v)) ; POD easier way?
-                              (group-by :clk msgs)))]
-    (vec
-     (mapcat (fn [[_ msgs]]
-               (cond (some #(= :bl (:mjpact %)) msgs) (sort (partial sort-blocked   model) msgs)
-                     (some #(= :ub (:mjpact %)) msgs) (sort (partial sort-unblocked model) msgs)
-                     (some #(= :st (:mjpact %)) msgs) (sort (partial sort-starved   model) msgs)
-                     (some #(= :us (:mjpact %)) msgs) (sort (partial sort-unstarved model) msgs)
-                     true                             (sort (partial sort-ordinary  model) msgs)))
-             mtable))))
+  (sort (partial sort-two-messages model) msgs))
 
 (declare buf+ buf- end-job block+ block- starve+ starve-)
-(defn add-compute-log!
+(defn add-compute-log! ; CIDER debugger has trouble with this!
   "Collect data essential for calculating performance measures."
   [msg]
-  (swap! *log-steady*
-         #(case (:act msg)
-            :bj (buf+    % msg)
-            :sm (buf-    % msg)
-            :ej (end-job % msg)
-            :bl (block+  % msg) 
-            :ub (block-  % msg)
-            :st (starve+ % msg)
-            :us (starve- % msg)
-            :aj @*log-steady*
-            :up @*log-steady*
-            :down @*log-steady*)))
+  (dosync
+   (alter *log-steady*
+          #(case (:act msg)
+             :bj (buf+    % msg)
+             :sm (buf-    % msg)
+             :ej (end-job % msg)
+             :bl (block+  % msg) 
+             :ub (block-  % msg)
+             :st (starve+ % msg)
+             :us (starve- % msg)
+             :aj @*log-steady*
+             :up @*log-steady*
+             :down @*log-steady*))))
 
 (declare print-now? pretty-buf print-lines)
 (defn push-log
@@ -199,32 +226,29 @@
    since the last clock tick. The :log-buf has msgs from the next clock tick,
    so you have to sort them and only push the old ones."
   [model]
-  ;;(doall (map println (-> model :log-buf)))
-  ;;(assoc model :log-buf []) ; diag -- these two instead of clean-log-buf.
-    (let [now    (:clock model)
-          before (:last-clock model)]
-    (if (> now before) ; Time to log!
-      (let [parts {:now   (filter #(<= (:clk %) now) (-> model :log-buf))  ; yes <=, not <. 
-                   :later (remove #(<= (:clk %) now) (-> model :log-buf))}
-            clean-buf     (cond->> (:now parts)
-                            (not (:job-detail? model)) (mapv #(dissoc % :dets))
-                            true (clean-log-buf))
-            warm-up (-> model :params :warm-up-time)]
-        (when (>= now warm-up)
-          (doall (map #(when (> (:clk %) warm-up)
-                         (add-compute-log! %))
-                      clean-buf)))
-        (cond-> model
-          (print-now? model parts now) (print-lines clean-buf)
-          true (assoc :log-buf (vec (:later parts)))))
-      model)))
+  (let [buf (:log-buf model)]
+    (when (not-empty buf)
+      (let [min-time (reduce #(min %1 (:clk %2)) ##Inf buf)
+            max-time (reduce #(max %1 (:clk %2)) 0 buf)]
+        (if (> max-time min-time) ; Time to log!
+          (let [parts (group-by #(if (== (:clk %) min-time) :now :later) buf)
+                clean-buf (cond->> (:now parts)
+                            (not (:job-detail? model))  (mapv #(dissoc % :dets)),
+                            (not-empty (:now parts))    (clean-log-buf))
+                warm-up (-> model :params :warm-up-time)]
+            (when (>= min-time warm-up)
+              (run! add-compute-log! clean-buf))
+            (cond-> model
+              (print-now? model clean-buf min-time) (print-lines clean-buf)
+              true (assoc :log-buf (-> parts :later vec))))
+          model)))))
 
 (defn print-lines
-  "Actually print the lines, updating (-> model :report :line-cnt)."
+  "pretty-print the lines, updating (-> model :report :line-cnt)."
   [model clean-buf]
   (let [fmt (str "{:clk" (-> model :params :time-format) "~{ ~A~}}~%")
         buf (pretty-buf model clean-buf)
-        line-num (atom (-> model :report :line-cnt))]
+        line-num (ref (-> model :report :line-cnt))]
     (run! (fn [line]
             (cl-format *out* fmt
                        (:clk line)
@@ -232,10 +256,9 @@
                            (assoc :line @line-num)
                            vec
                            flatten))
-            (swap! line-num inc))
+            (dosync (alter line-num inc)))
           buf)
     (cond-> model 
-      ;; :diag-log-buf used in core.clj testing. 
       (-> model :report :diag-log-buf?) (update-in [:diag-log-buf] #(into % buf))
       true (update-in [:report :line-cnt] #(+ % (count buf))))))
 
@@ -322,9 +345,9 @@
 ;;;============= Pretty printing ===================================================
 (defn print-now?
   "Returns true if it is time to print log entries."
-  [model parts now]
+  [model clean-buf now]
   (and (-> model :report :log?)
-       (not-empty (:now parts))
+       (not-empty clean-buf)
        (>  (-> model :report :max-lines) (-> model :report :line-cnt))
        (>= now (-> model :params :warm-up-time))))
 
@@ -391,8 +414,8 @@
   "Reorder and translate items in buffer, truncate floats"
   [model clean-buf]
   (->> clean-buf
-       (map #(prettyfy-msg model %))
        (sort-messages model)
+       (map #(prettyfy-msg model %))
        (map  #(shorten-msg-floats model %))
        (map  #(into (sorted-map-by msg-key-compare) %))))
 

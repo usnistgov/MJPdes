@@ -85,7 +85,7 @@
 
 (s/def ::W ::pos)
 (s/def ::mu ::pos)
-(s/def ::lambda ::pos)
+(s/def ::lambda ::non-neg)
 (s/def ::up&down seq?)
 (s/def ::status (s/nilable ::Job))
 (s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down]))
@@ -118,7 +118,7 @@
 (s/def ::line (s/and (s/map-of keyword? ::equipment) #(>= (count %) 3)))
 (s/def ::Model (s/keys :req-un [::line ::topology ::entry-point ::jobmix ::report ::params]))
 
-(s/fdef advance-clock ; POD the = in <= here is not desirable
+(s/fdef advance-clock 
         :args (s/and (s/cat :model ::Model :new-clock ::non-neg)
                      #(<= (-> (:model %) :clock) (:new-clock %)))
         :ret ::Model)
@@ -127,12 +127,10 @@
   "Move clock and machines forward in time. This is the only 
    way in which the clock is advanced." 
   [model new-clock]
-  (let [clock (:clock model)]
-    (if (= clock new-clock)
-      model
-      (as-> model ?m
-        (assoc ?m :last-clock (:clock ?m))
-        (assoc ?m :clock new-clock)))))
+  (let [clock (:clock model)] ; POD the following superfluous when s/fdef. 
+    (when (> clock new-clock) (throw (ex-info "clock running backwards"
+                                              {:clock clock :new-clock new-clock})))
+    (assoc model :clock new-clock)))
 
 ;;;  end-time = last time the machine starts up plus what remains to be achieved at that time.
 (defn end-time
@@ -175,7 +173,9 @@
   "Return a lazy-seq generator for the up/down events of an exponential machine.
    The events (and start arg) look like this: [<index number> (:up | :down) <time-point>]."
   [lambda mu start]
-  (iterate (fn [[n event etime]]
+  (if (== lambda 0)
+    '([0 :down ##Inf])
+    (iterate (fn [[n event etime]]
              [(inc n)
               (if (= :up event) :down :up)
               (let [up-now? (= event :up)
@@ -187,7 +187,7 @@
                     (+ t-now T-delta)
                     (recur (+ T-delta
                               (stats/sample-exp 1 :rate rate))))))])
-           start))
+           start)))
 
 (defn machine-future
   "Return the next event for the machine."
@@ -205,15 +205,13 @@
 ;;; :st - starved
 ;;; :us - unstarved
 ;;;=============== Actions update the model =====================================
-(s/fdef bring-machine-up ; machine must be down
+(s/fdef bring-machine-up ; ; machine must be down (:future = :up)
         :args (s/and (s/cat :model ::Model :m keyword?)
                      #(let [m (:m %)]
                         (= :up (-> (:model %) :line m val val :future second)))))
         
 (defn bring-machine-up 
-  "Update :future on machine and call advance-clock on old value.
-   This is necessary because otherwise a simulation can get stuck 
-   with the first machine down. (Otherwise does nothing.)"
+  "Update :future on a down machine; log the action."
   [model m]
   (let [[n event etime] (-> model :line m :future)
         next-state (first (take 1 (drop-while #(<= (first %) n)
@@ -222,15 +220,13 @@
         (log/log {:clk etime :m m :act :up})
         (assoc-in [:line m :future] next-state))))
 
-(s/fdef bring-machine-down ; machine must be up
+(s/fdef bring-machine-down ; machine must be up (:future = :down)
         :args (s/and (s/cat :model ::Model :m keyword?)
                      #(let [m (:m %)]
                         (= :down (-> (:model %) :line m val val :future second)))))
 
 (defn bring-machine-down
-  "Update :future on machine and call advance-clock on old value.
-   This is necessary because otherwise a simulation can get stuck 
-   with the first machine down. (Otherwise does nothing.)"
+  "Update :future on an up machine; log the action."
   [model m]
   (let [[n event etime] (-> model :line m :future)
         next-state (first (take 1 (drop-while #(<= (first %) n)
@@ -290,13 +286,13 @@
   (let [mach (-> model :line m)
         job  (:status mach)
         b?   (util/buffers-to model m)
-        Tend (:ends job)]
+        now  (:clock model)]
     (as-> model ?m
       (if b?
-        (log/log ?m {:act :bj :bf b? :j (:id job) :n (count (-> ?m :line b? :holding))
-                     :clk Tend :dets (log/detail model)})
+        (log/log ?m {:act :bj :m m :bf b? :j (:id job) :n (count (-> ?m :line b? :holding))
+                     :clk now :dets (log/detail model)})
         (log/log ?m {:act :ej :m (:name mach) :j (:id job) :ent (:enters job) 
-                     :clk Tend :dets (log/detail model)}))
+                     :clk now :dets (log/detail model)}))
       (assoc-in ?m [:line m :status] nil)
       (cond-> ?m
         b? (update-in [:line b? :holding] conj job)))))
@@ -346,8 +342,11 @@
   "Return a record-action to start a job on an entry-point machine."
   [model]
   (let [e (get (:line model) (:entry-point model))]
-    (when (and (not (util/occupied? e)) ; Doesn't matter if up or down.
-               (util/up? e))            ; 2018-01-27, I think it does now. 
+    (when (and (not (util/occupied? e)) 
+               (util/up? e) ; 2018-01-27 at one point I didn't have this...
+               (or (= :BAS (:discipline e))
+                   (and (= :BBS (:discipline e))
+                        (not (util/buffer-full? model e)))))
       [{:time (:clock model) :fn add-job :args (list (new-job model) (:entry-point model))}])))
 
 (defn bring-machine-up?
@@ -368,71 +367,101 @@
                           :fn bring-machine-down :args (list (:name mn))})
                 bring-down)))))
 
+;;; Don't consider (> (:clock model) (-> mach :status :ends)) is too late!
+;;; Any message, other than the one on the next clock tick, is ignored. 
+(defn new-blocked-bas?
+  "Return true if named machine is blocked BAS."
+  [model m]
+  (let [mach (-> model :line m)]
+    (and
+     (not ((:blocked model) m))
+     (util/buffer-full? model mach)
+     (util/occupied? mach))))
+    
+;;; Interesting that you don't even look at the downstream buffer here;
+;;; that is done before starting a job. 
+(defn new-blocked-bbs?
+  "Return true if named machine is blocked BBS."
+  [model m]
+  (let [mach (-> model :line m)]
+    (and
+     (not ((:blocked model) m))
+     (not (util/occupied? mach))
+     (not (util/feed-buffer-empty? model mach)))))
+
+(defn blocked-check-time
+  "Most acts specify the time of occurrence; blocking can't. So it is done now."
+  [model act]
+  (let [m (-> act :args first)
+        mach (-> model :line m)]
+    (cond (= :BAS (-> model :line m :discipline))
+          (if (and (util/buffer-full? model mach)
+                   (util/occupied? mach))
+            (-> model :line m :status :ends)
+            ##Inf)
+          (= :BBS (-> model :line m :discipline))
+          (if (and (not (util/occupied? mach))
+                   (not (util/feed-buffer-empty? model mach))
+                   (util/buffer-full? model mach))
+            (:clock model)
+            ##Inf))))
+
 (defn new-blocked?
   "Return record-actions to list newly blocked machines."
   [model]
   (let [clock (:clock model)
         old-block (:blocked model)
-        new-block  (filter #(and 
-                             (util/buffer-full? model %)
-                             (not (contains? old-block (:name %)))
-                             (util/occupied? %))
-                           (machines model))]
-    ;; This one is a bit odd. It is a msg issued when the part is being processed and the buffer is full.
-    ;; The time the blocking starts is when the machine finishes the job. 
-    ;; This is a "provisional" message in that it is issued earlier than :clk; between the time it is issued
-    ;; and the time this part finishes, the downstream machine might pull a job from the buffer. 
-    ;; (NB You can't count on that because that downstream machine could itself be blocked.)
-    ;; I do not allow blocking messages to advance the clock. I also don't flush the buffer on blocking
-    ;; messages. Therefore I can eliminate them if an unblock occurs before the time of the block.
-    ;; (I eliminate the unblock at that time too.)
-    (when (not-empty new-block)
-      (vec (map (fn [mn] {:time (-> mn :status :ends)
-                          :fn new-blocked :args (list (:name mn))}) new-block)))))
+        new-block  (filter #(if (= :BAS (-> model :line % :discipline))
+                              (new-blocked-bas? model %)
+                              (new-blocked-bbs? model %))
+                           (:machines model))]
+    (when (not-empty new-block) 
+      (vec (map (fn [m] {:time blocked-check-time ; that is, check when you see this.
+                         :fn new-blocked :args (list m)}) new-block)))))
+
+(defn new-unblocked-bas?
+  [model m]
+  (let [mach (-> model :line m)]
+    (and ((:blocked model) m)
+         (not (util/buffer-full? model mach)))))
+
+;;; POD Same thing, I think! It's just that add-job/advance2machine that differ.
+(defn new-unblocked-bbs?
+  [model m]
+  (let [mach (-> model :line m)]
+    (and ((:blocked model) m)
+         (not (util/buffer-full? model mach)))))
 
 (defn new-unblocked?
   "Return record-actions to unlist certain machines as blocked."
   [model]
   (let [clock (:clock model)
         old-block (:blocked model)
-        new-unblock (filter #(and
-                              (contains? old-block (:name %))
-                              (not (util/buffer-full? model %)))
-                            (machines model))]
+        new-unblock (filter #(if (= :BAS (-> model :line % :discipline))
+                               (new-unblocked-bas? model %)
+                               (new-unblocked-bbs? model %))
+                            (:machines model))]
     (when (not-empty new-unblock)
-      (vec (map (fn [mn] {:time clock :fn new-unblocked :args (list (:name mn))}) new-unblock)))))
-
-(def ^:dynamic *starved?-fn*
-  (fn [model]
-    (let [old-starve (:starved model)]
-      (filter 
-       #(and
-         (not (contains? old-starve (:name %)))
-         (util/finished? model %)
-         (util/feed-buffer-empty? model %))
-       (machines model)))))
-
-(def ^:dynamic *unstarved?-fn*
-  (fn [model]
-    (let [old-starve (:starved model)]
-      (filter #(and
-                (contains? old-starve (:name %))
-                (not (util/feed-buffer-empty? model %)))
-              (machines model)))))
+      (vec (map (fn [m] {:time clock :fn new-unblocked :args (list m)}) new-unblock)))))
 
 (defn new-starved?
-  "Return record-actions to add starved machines."
   [model]
   (let [clock (:clock model)
-        new-starve (*starved?-fn* model)]
+        new-starve  (filter #(and
+                              (not ((:starved model) (:name %)))
+                              (util/finished? model %)
+                              (util/feed-buffer-empty? model %))
+                            (machines model))]
     (when (not-empty new-starve)
       (vec (map (fn [mn] {:time clock :fn new-starved :args (list (:name mn))}) new-starve)))))
 
 (defn new-unstarved?
-  "Return record-actions to unlist certain machines as starved."
   [model]
   (let [clock (:clock model)
-        new-unstarve (*unstarved?-fn* model)]
+        new-unstarve (filter #(and
+                               ((:starved model) (:name %))
+                               (not (util/feed-buffer-empty? model %)))
+                             (machines model))]
     (when (not-empty new-unstarve)
       (vec (map (fn [mn] {:time clock :fn new-unstarved :args (list (:name mn))}) new-unstarve)))))
 
@@ -456,10 +485,20 @@
                           (or (util/up? %) (:jm2dm model)) 
                           (not (= (:name %) entry-machine))
                           (not (util/occupied? %))
-                          (not (util/feed-buffer-empty? model %)))
+                          (not (util/feed-buffer-empty? model %))
+                          (or (= :BAS (:discipline %))
+                              (and (= :BBS (:discipline %))
+                                   (not (util/buffer-full? model %)))))
                         (machines model))]
     (when (not-empty advance)
       (vec (map (fn [mn] {:time clock :fn advance2machine :args (list (:name mn))}) advance)))))
+
+(defn get-time
+  "(-> act :time) may be a number or a function that returns one."
+  [model act]
+  (if (number? (:time act))
+    (:time act)
+    ((:time act) model act)))
 
 (defn runables
   "Return a sequence of all the actions and record-actions 
@@ -475,10 +514,9 @@
              (new-unstarved? model)  
              (new-blocked? model)  
              (new-unblocked? model))]
-    (reset! diag {:all all})
     (when (not-empty all)
-      (let [min-time (apply min (map :time all))]
-        (filter #(= (:time %) min-time) all)))))
+      (let [min-time (apply min (map #(get-time model %) all))]
+        (filter #(= (get-time model %) min-time) all)))))
       
 (defn run-action
   "Run a single action, returning the model."
@@ -503,10 +541,12 @@
   (cond (instance? ExpoMachine e)
         (let [lambda (:lambda e)
               mu     (:mu     e)
+              discipline (or (:discipline e) :BAS)
               first-event (expo-up&down-init-event lambda mu)]
           (as-> e ?m 
             (assoc ?m :name k)
-            (assoc ?m :up&down (expo-up&down lambda mu first-event))
+            (assoc ?m :discipline discipline) ; POD end machine shouldn't have a discipline. 
+            (assoc ?m :up&down  (expo-up&down lambda mu first-event))
             (assoc ?m :future first-event)
             (assoc ?m :W (if (number? (:W ?m)) (:W ?m) (rand-range (:bounds (:W ?m)))))
             [k ?m])),
@@ -552,9 +592,7 @@
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0)
-      (if check?
-        (spec-check-model ?m)
-        ?m))))
+      (cond-> ?m check? spec-check-model))))
 
 (defn calc-basics
   "Produce a results form containing percent time blocked, and job residence time."
@@ -672,17 +710,17 @@
   "Body of action loop that does the work"
   [model job-end time-end]
   (reset! +kill-all+ false)
-  (loop [model (assoc model :last-clock -1.0)]
+  (loop [model model]
     (if (end-main-loop? model job-end time-end)
       (assoc-in model [:params :status] :normal-end)
-      (let [actions  (when (not @+kill-all+) (runables model))
-            next-clk (when actions (:time (first (remove #(= :bl (:act %)) actions))))]
+      (let [actions  (when-not @+kill-all+ (runables model))
+            next-clk (when actions (get-time model (first actions)))]
         (if (empty? actions) 
           (assoc-in model [:params :status] :no-runables)
           (as-> model ?m
-            (reduce #(run-action %1 %2) ?m actions)
             (advance-clock ?m next-clk)
-            (log/push-log  ?m)
+            (reduce #(run-action %1 %2) ?m actions)
+            (log/push-log ?m)
             (recur ?m)))))))
 
 (defn main-loop-multi
@@ -701,7 +739,7 @@
                      time-end (:run-to-time (:params model))]
                    (as-> model ?m
                        (preprocess-model ?m)
-                       (binding [log/*log-steady* (atom (log/steady-form ?m))] ; create a log for computations.
+                       (binding [log/*log-steady* (ref (log/steady-form ?m))] ; create a log for computations.
                          (-> ?m
                          (main-loop-loop job-end time-end)
                          (postprocess-model n start))))))) ; Returns a result object
@@ -719,8 +757,8 @@
           job-end  (:run-to-job  (:params model))
           time-end (:run-to-time (:params model))]
       (as-> model ?m
-        (preprocess-model ?m)
-        (binding [log/*log-steady* (atom (log/steady-form ?m))] ; create a log for computations.
+        (reset! diag (preprocess-model ?m))
+        (binding [log/*log-steady* (ref (log/steady-form ?m))] ; create a log for computations.
           (as-> ?m ?m2
               (main-loop-loop ?m2 job-end time-end)
               (postprocess-model ?m2 1 start))) ; Returns a result object
@@ -734,5 +772,3 @@
     (if (or (not n) (= n 1))
       (main-loop-once  model out-stream)
       (main-loop-multi model out-stream))))
-
-(stest/instrument)
