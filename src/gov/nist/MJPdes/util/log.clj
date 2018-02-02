@@ -1,8 +1,8 @@
 (ns gov.nist.MJPdes.util.log
   "Data collection, editing, and printing of DES events"
   (:require
-   [clojure.spec.alpha :as s]
    [clojure.pprint :refer (cl-format pprint pp)]
+   [clojure.spec.alpha :as s]
    [gov.nist.MJPdes.util.utils :as util :refer (ppp ppprint)]))
 
 (def ^:dynamic *log-steady* "Collects essential data for steady-state calculations." nil)
