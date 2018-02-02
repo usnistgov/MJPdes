@@ -119,7 +119,7 @@ An annotation of the example input file follows:
            :jobType2 (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
                                     :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})}})
 ```
-
+### Machines
 The ExpoMachine, Buffer and JobType forms create objects of the type named.
 The details of these objects are as follows:
 
@@ -130,11 +130,21 @@ The details of these objects are as follows:
 * :mu is the repair rate.
 * :W is the work capacity.
 
+You can specify, at the individual machine-level, whether to use  block-before-service buffering
+discipline or block-after-service (the default). This is specified using :BBS and :BAS respectively
+as shown below:
+
+```clojure
+(map->ExpoMachine {:lambda 0.1 :mu 0.9 :W 1.2 :discipline :BBS})
+```
+
+### Buffers
 ```clojure
 (map->Buffer {:N 3})
 ```
 * :N is the size of the buffer.
 
+### Jobs
 ```clojure
 (map->JobType {:portion 0.2 ; 20% of jobs will be of type jobType2.
                :w {:m1 1.0, :m2 2.0, :m3 1.5, :m4 1.0, :m5 1.0}})

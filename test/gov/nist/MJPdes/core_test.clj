@@ -11,7 +11,7 @@
             [clojure.pprint :refer (cl-format pprint)]))
 
 ;;; POD If you recompile core.clj after evaluating this, it won't happen. 
-(stest/instrument) ; Instrument everything
+;(stest/instrument) ; Instrument everything
 
 (def ^:private diag (atom nil))
 
@@ -110,7 +110,7 @@
                 :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}
                 :jobmix {:jobType1 (core/map->JobType {:portion 1.0 :w {:m1 1.0}})}})
               (core/preprocess-model :check? false))]
-    (binding [log/*log-steady* (atom (log/steady-form m))] ; create a log for computations.
+    (binding [log/*log-steady* (ref (log/steady-form m))] ; create a log for computations.
       (-> m 
           (log/log {:act :bl, :m :m1, :clk 0.5})
           (log/log {:act :ub, :m :m1, :clk 0.5})
@@ -131,6 +131,7 @@
           (update-clock 3.0 4.0)
           (log/push-log)
           (update-clock 4.0 5.0)
+          (log/log {:act :aj, :m :m1, :clk 5.0}) ; Need something to log/push-log
           (log/push-log)                     ; block percent = 2/5
           (core/calc-basics @log/*log-steady*)))))
 
@@ -142,7 +143,7 @@
                     :topology [:m1]
                     :params {:current-job 0 :warm-up-time 0.0 :run-to-time 5.0}})
                   (core/preprocess-model :check? false))]
-    (binding [log/*log-steady* (atom (log/steady-form model))] ; create a log for computations.
+    (binding [log/*log-steady* (ref (log/steady-form model))] ; create a log for computations.
       (-> model
           (log/log {:act :st, :m :m1, :clk 0.5})
           (log/log {:act :us, :m :m1, :clk 0.5})
@@ -163,6 +164,7 @@
           (update-clock 3.0 4.0)
           (log/push-log)
           (update-clock 4.0 5.0)
+          (log/log {:act :aj, :m :m1, :clk 5.0}) ; Need something to log/push-log
           (log/push-log)
           (core/calc-basics @log/*log-steady*)))))
 

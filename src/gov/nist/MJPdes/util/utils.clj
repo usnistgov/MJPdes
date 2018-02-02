@@ -2,18 +2,20 @@
   (:require [clojure.pprint :refer (cl-format pprint pp)]
             [clojure.spec.alpha :as s]))
 
+;;; Note: I (try to)  use 'm' or 'm-name' for the name of a machine and 'mach' for its map. 
+
 (alias 'core 'gov.nist.MJPdes.core)
 
 ;;;=== General =========================
 (defn ppp []
   (binding [clojure.pprint/*print-right-margin* 140
-            *print-length* 10]
+           #_ #_ *print-length* 10]
     (pprint *1)))
 
 (defn ppprint
   ([arg]
    (binding [clojure.pprint/*print-right-margin* 140
-             *print-length* 10]
+             #_ #_ *print-length* 10]
      (pprint arg)))
   ([arg len]
     (binding [clojure.pprint/*print-right-margin* 140
@@ -37,23 +39,6 @@
                       (let [dif (- x avg)]
                         (* dif dif)))
                     v)))))
-
-#_(defn analyze-results [filename]
-  "Read an output file and perform various calculations."
-  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader filename))]
-    (let [results (loop [mp (edn/read {:eof :eof} in)
-                         res {:starve []}]
-                    (if (not= :eof mp)
-                      (recur (edn/read {:eof :eof} in)
-                             (update-in res [:starve] conj (:m2 (:starved mp))))
-                      res))]
-      ;; Starvation
-      (let [starve (:starve results)]
-        {:starvation {:min (apply min starve)
-                      :max (apply max starve)
-                      :mean (mean starve)
-                      :variance (variance starve)
-                      :values starve}}))))
 
 (defn buffers-to
   "Return the name of the buffer that the named machine buffers to.
@@ -80,31 +65,67 @@
   (s/assert ::core/ExpoMachine mach)    
   (= :up (second (:future mach))))
 
-(defn finished? [model m]
-  "Returns true if the machine is finished with what it is working on???"
-  (let [status (:status m)]
+(defn finished? 
+  "Returns true if the machine (arg is map) either does not have a job
+   or has one but is blocked."
+  [model mach]
+  (let [status (:status mach)]
     (or (not status)
         (>= (:clock model) (:ends status)))))
 
-(defn occupied? [m]
-  (s/assert ::core/machine m)
-  (:status m))
+(defn occupied?
+  "Returns true if machine (arg is map) has a a job (running or blocked)."
+  [mach]
+  (s/assert ::core/machine mach)
+  (:status mach))
 
-(defn feed-buffer-empty? [model m] 
-  "Returns true if buffer feeding machine m is empty." 
-  (when (not= (:name m) (:entry-point model))
-    (let [buf (get (:line model) (takes-from model (:name m)))]
+(defn feed-buffer-empty? 
+  "Returns true if buffer feeding machine (arg is map) is empty."
+  [model mach] 
+  (when (not= (:name mach) (:entry-point model))
+    (let [buf (get (:line model) (takes-from model (:name mach)))]
       (== (count (:holding buf)) 0))))
 
-(defn buffer-full? [model m] 
-  "Returns true if the buffer that machine m places completed work on is full."
-  (when-let [buf (get (:line model) (buffers-to model (:name m)))] ; last machine cannot be blocked.
+(defn buffer-full? 
+  "Returns true if the buffer that machine (arg is map) places completed work on is full."
+  [model mach] 
+  (when-let [buf (get (:line model) (buffers-to model (:name mach)))] ; last machine cannot be blocked.
     (== (count (:holding buf)) (:N buf))))
 
 (defn job-requires
-  "Total time that job j requires on a machine m, (w_{ij}/W_i)"
+  "Total time that job j requires on a machine m (arg is name), (w_{ij}/W_i)"
   [model j m]
   (let [mach (-> model :line m)
         W (or (:W mach) 1.0)
         w (get (:w (get (:jobmix model) (:type j))) m)] 
     (/ w W)))
+
+(defn next-machine?
+  "Returns true if the next machine down the line from m1 is m2."
+  [model m1 m2]
+  (let [buf1 (buffers-to model m1)
+        buf2 (takes-from model m2)]
+    (and buf1 (= buf1 buf2))))
+
+(defn prev-machine?
+  "Returns true if the previous machine up the line from m1 is m2"
+  [model m1 m2]
+  (let [buf1 (takes-from model m1)
+        buf2 (buffers-to model m2)]
+    (and buf1 (= buf1 buf2))))
+
+(defn upstream?
+  "Returns true if equip1 is upstream of equip2"
+  [model equip1 equip2]
+  (let [top ^clojure.lang.PersistentVector (:topology model)]
+    (and (not= equip1 equip2)
+         (some #(= % equip1) top)
+         (some #(= % equip2) top)
+         (< (.indexOf top equip1)
+            (.indexOf top equip2)))))
+
+
+
+
+
+  
