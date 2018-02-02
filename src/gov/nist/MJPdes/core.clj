@@ -245,7 +245,7 @@
                 (assoc :starts (:clock model))
                 (assoc :ends ends))]
     (-> model
-        (log/log {:act :aj :j (:id job) :jt (:type job) :ends ends
+        (log/log {:act :aj :m m :j (:id job) :jt (:type job) :ends ends
                   :clk (:clock model) :dets (log/detail model)}) ; not essential
         (update-in [:params :current-job] inc)
         (assoc-in [:line m :status] job)
@@ -268,7 +268,7 @@
         ends (end-time model (util/job-requires model job m) m)
         job (assoc job :ends ends)]
     (-> model 
-        (log/log {:act :sm :bf b-name :j (:id job) :n (count (:holding b))
+        (log/log {:act :sm :m m :bf b-name :j (:id job) :n (count (:holding b))
                   :clk (:clock model) :dets (log/detail model)})
         (assoc-in  [:line m :status] job)
         (assoc-in  [:line m :future] (machine-future model m))
@@ -341,12 +341,14 @@
 (defn add-job? 
   "Return a record-action to start a job on an entry-point machine."
   [model]
-  (let [e (get (:line model) (:entry-point model))]
-    (when (and (not (util/occupied? e)) 
-               (util/up? e) ; 2018-01-27 at one point I didn't have this...
-               (or (= :BAS (:discipline e))
-                   (and (= :BBS (:discipline e))
-                        (not (util/buffer-full? model e)))))
+  (let [m (:entry-point model)
+        mach (-> model :line m)]
+    (when (and (not (util/occupied? mach))
+               (not ((:blocked model) m)) ; stronger than bbs/buffer-full. Prevents :aj>:ub on same clock-tick. 
+               (util/up? mach) ; 2018-01-27 at one point I didn't have this... (jm2dm?)
+               (or (= :BAS (:discipline mach))
+                   (and (= :BBS (:discipline mach))
+                        (not (util/buffer-full? model mach)))))
       [{:time (:clock model) :fn add-job :args (list (new-job model) (:entry-point model))}])))
 
 (defn bring-machine-up?
@@ -468,8 +470,10 @@
 (defn advance2buffer?
   "Return actions to buffer and times at which these can occur (which may be later than clock)."
   [model]
-  (let [advance (filter #(and
-                          (util/occupied? %) ; maybe not finished yet; will be here. 
+  (let [blocked (:blocked model)
+        advance (filter #(and
+                          (util/occupied? %) ; maybe not finished yet; will be here.
+                          (not (blocked (:name %)))  ; prevents :aj/sm>:bl on same clock-tick
                           (not (util/buffer-full? model %)))
                         (machines model))]
     (when (not-empty advance)
@@ -480,15 +484,21 @@
   "Return actions to move jobs onto machine. Can be done now." 
   [model]
   (let [entry-machine (:entry-point model)
-        clock (:clock model)    
-        advance (filter #(and  ; Unless it was starved, :jm2dm doesn't matter.
-                          (or (util/up? %) (:jm2dm model)) 
-                          (not (= (:name %) entry-machine))
-                          (not (util/occupied? %))
-                          (not (util/feed-buffer-empty? model %))
-                          (or (= :BAS (:discipline %))
-                              (and (= :BBS (:discipline %))
-                                   (not (util/buffer-full? model %)))))
+        clock (:clock model)
+        jm2dm? (:jm2dm model)
+        blocked (:blocked model)
+        starved (:starved model)
+        advance (filter #(let [m (:name %)]
+                           (and  ; Unless it was starved, :jm2dm doesn't matter.
+                            (or (util/up? %) jm2dm?)
+                            (not (= m entry-machine))
+                            (not (blocked m)) ; stronger than bbs/buffer-full. Prevents :sm>:ub
+                            (not (starved m)) ; Prevents :sm>:us. Both problems on same clock-tick.
+                            (not (util/occupied? %))
+                            (not (util/feed-buffer-empty? model %))
+                            (or (= :BAS (:discipline %))
+                                (and (= :BBS (:discipline %))
+                                     (not (util/buffer-full? model %))))))
                         (machines model))]
     (when (not-empty advance)
       (vec (map (fn [mn] {:time clock :fn advance2machine :args (list (:name mn))}) advance)))))

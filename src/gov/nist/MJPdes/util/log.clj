@@ -70,29 +70,34 @@
   [act]
   (some #(= act %) [:st :us :bl :ub]))
 
+;;; POD Use of util/next-machine? is a bit overkill because the messages compared
+;;;     are alway contemporaneous. (Thus they are all part of the same initiating
+;;;     local to this part of the line.) Used to be up? and down?
+
 (defn sort-blocked
-  "In BAS, block after ending; In BBS block before starting."
+  "In BAS, :bl after :bj; In BBS :bl before :sm."
   [model [msg1 msg2 answer]]
   (if (not (nil? answer))
     [msg1 msg2 answer]
     (let [m1 (:m msg1)
-          m2 (:m msg2) ; model below for easier testing.
-          m1>m2? (util/next-machine? model m1 m2) ; work flows from m1 to m2. 
+          m2 (:m msg2) 
           same? (= m1 m2)
-          m2>m1? (util/next-machine? model m1 m1)
           act1 (:act msg1)
           act2 (:act msg2)
           BBS? (if (= act1 :bl)
                  (= (-> model :line m1 :discipline) :BBS)
                  (= (-> model :line m2 :discipline) :BBS))
           BAS? (not BBS?)]
-      [msg1 msg2 (cond ; BAS, block before ending
-                   (and same? BAS? (= act1 :bl) (= act2 :bj)) true,
-                   (and same? BAS? (= act2 :bl) (= act1 :bj)) false,
-                       ; BBS block before starting
-                   (and same? BBS? (= act1 :bl) (#{:aj :sm} act2)) true,
-                   (and same? BBS? (= act2 :bl) (#{:aj :sm} act1)) false,
-                       ; Block before downstream
+      [msg1 msg2 (cond ; BAS, :bl before :bj
+                   (and same? BAS? (= act2 :bj)) true,
+                   (and same? BAS? (= act1 :bj)) false,
+                   ;; BBS :bl before :aj :sm
+                   (and same? BBS? (#{:aj :sm} act2)) true,
+                   (and same? BBS? (#{:aj :sm} act1)) false,
+                   ;; BBS :bj before :bl
+                   (and same? BBS? (= act1 :bj)) true,
+                   (and same? BBS? (= act2 :bj)) false,
+                   ;; :bl before downstream
                    (and (= act1 :bl)) true,
                    (and (= act2 :bl)) false,
                    :else nil)])))
@@ -104,23 +109,26 @@
     [msg1 msg2 answer]
     (let [m1 (:m msg1)
           m2 (:m msg2) ; model below for easier testing.
-          m1>m2? (util/next-machine? model m1 m2)
           same? (= m1 m2)
-          m2>m1? (util/next-machine? model m2 m1)
           act1 (:act msg1)
           act2 (:act msg2)
           BBS? (if (= act1 :ub)
                  (= (-> model :line m1 :discipline) :BBS)
-                 (= (-> model :line m2 :discipline) :BBS))]
-      [msg1 msg2 (cond ; BBS, unblock before starting
-                   (and BBS? same? (= act1 :ub) (#{:aj :sm} act2)) true,
-                   (and BBS? same? (= act2 :ub) (#{:aj :sm} act1)) false,
-                   ;; BBS, downstream starts before unblocking. 
-                   (and BBS? m1>m2?   (= act1 :ub) (= act2 :sm)) false,
-                   (and BBS? m2>m1? (= act1 :sm) (= act2 :ub)) true,
-                   ;; unblock before starting or moving off     
-                   (and same? (= act1 :ub) (#{:sm :aj :bj :ej} act2)) true,
-                   (and same? (= act2 :ub) (#{:sm :aj :bj :ej} act1)) false,
+                 (= (-> model :line m2 :discipline) :BBS))
+          BAS? (not BBS?)]
+      [msg1 msg2 (cond ; BBS, same machine unblock before starting
+                   (and BBS? same? (#{:aj :sm} act2)) true,
+                   (and BBS? same? (#{:aj :sm} act1)) false,
+                   ;; BAS & BBS, can't start until unblocked by next machine. POD Why 4?
+                   (and (not same?) (= act1 :sm)) true,
+                   (and (not same?) (= act2 :sm)) false,
+                   ;; downstream ends/starts new job before upstream unblocks.
+                   ;; (The ends part of this for total ordering.)
+                   (and BAS? (not same?) (#{:ej :bj :sm} act2)) true, 
+                   (and BAS? (not same?) (#{:ej :bj :sm} act1)) false,    
+                   ;; :ub before :sm :aj :bj :ej
+                   (and same? (#{:sm :aj :bj :ej} act2)) true,
+                   (and same? (#{:sm :aj :bj :ej} act1)) false,
                    :else nil)])))
 
 (defn sort-starved
@@ -130,17 +138,15 @@
     [msg1 msg2 answer]
     (let [m1 (:m msg1) 
           m2 (:m msg2) ; model below for easier testing.
-          m1>m2? (util/next-machine? model m1 m2)
           same? (= m1 m2)
-          m2>m1? (util/next-machine? model m2 m1)
           act1 (:act msg1)
           act2 (:act msg2)]
       [msg1 msg2 (cond ;; Do upstream before starving.
-                   (and   m1>m2? (#{:ej :sm :aj} act1) (= act2 :st)) true,
-                   (and   m1>m2? (#{:ej :sm :aj} act2) (= act1 :st)) false,
+                   (and (not same?) (#{:ej :sm :aj} act1)) true,
+                   (and (not same?) (#{:ej :sm :aj} act2)) false,
                    ;; end job before starving
-                   (and same? (#{:bj :ej} act1) (= act2 :st)) true,
-                   (and same? (#{:bj :ej} act2) (= act1 :st)) false,
+                   (and same? (#{:bj :ej} act1)) true,
+                   (and same? (#{:bj :ej} act2)) false,
                    :else nil)])))
 
 (defn sort-unstarved
@@ -150,17 +156,16 @@
     [msg1 msg2 answer]
     (let [m1 (:m msg1)
           m2 (:m msg2) ; model below for easier testing.
-          m1>m2? (util/next-machine? model m1 m2)
           same? (= m1 m2)
-          m2>m1? (util/next-machine? model m2 m1)
           act1 (:act msg1)
           act2 (:act msg2)]
-      [msg1 msg2 (cond ;; Do upstream before unstarving.
-                   (and m1>m2? (#{:bj :aj} act1) (= act2 :us)) true,
-                   (and m2>m1? (#{:bj :aj} act2) (= act1 :us)) false,
+      [msg1 msg2 (cond 
                    ;; unstarve before starting 
-                   (and same? (= act1 :us) (= act2 :sm)) true,
-                   (and same? (= act2 :us) (= act1 :sm)) false,
+                   (and same? (= act2 :sm)) true,
+                   (and same? (= act1 :sm)) false,
+                   ;; Do upstream before unstarving.
+                   (and (#{:bj :aj} act1)) true,
+                   (and (#{:bj :aj} act2)) false,
                    :else nil)])))
 
 (defn sort-ordinary
@@ -198,9 +203,18 @@
               true                          (sort-ordinary  model))]
     (nth res 2)))
 
+(defn rsort-two-messages
+  "To facilitate testing"
+  [model msg1 msg2]
+  (sort-two-messages model msg2 msg1))
+
+#_(defn sort-messages
+  [model msgs]
+    (sort (partial sort-two-messages model) msgs))
+
 (defn sort-messages
   [model msgs]
-  (sort (partial sort-two-messages model) msgs))
+  msgs)
 
 (declare buf+ buf- end-job block+ block- starve+ starve-)
 (defn add-compute-log! ; CIDER debugger has trouble with this!
@@ -246,13 +260,14 @@
 (defn print-lines
   "pretty-print the lines, updating (-> model :report :line-cnt)."
   [model clean-buf]
-  (let [fmt (str "{:clk" (-> model :params :time-format) "~{ ~A~}}~%")
+  (let [fmt (str "{:clk" (-> model :params :time-format) " ~18A" "~{ ~A~}}~%")
         buf (pretty-buf model clean-buf)
         line-num (ref (-> model :report :line-cnt))]
     (run! (fn [line]
             (cl-format *out* fmt
                        (:clk line)
-                       (-> (dissoc line :clk)
+                       (:act line)
+                       (-> (dissoc line :clk :act)
                            (assoc :line @line-num)
                            vec
                            flatten))
@@ -389,11 +404,9 @@
 (defn prettyfy-msg
   "Interpret/translate the SCADA log. (Give pretty-fied pn names to MJPdes output.)" 
   [model msg]
-  (let [m (implies-machine model msg)]
-    (as-> msg ?msg
-      (assoc ?msg :m m)
-      (assoc ?msg :mjpact (:act ?msg))
-      (assoc ?msg :act (mjp2pretty-name ?msg)))))
+  (as-> msg ?msg
+    (assoc ?msg :mjpact (:act ?msg))
+    (assoc ?msg :act (mjp2pretty-name ?msg))))
 
 ;;; POD NOTE! If you fail to include a key here, the message printing gets
 ;;;     messed up, with values not matched to the correct keys!
