@@ -182,20 +182,20 @@ are then described in turn.
 Specifying :report {:max-lines <some number>} will produce output similar to the following:
 
 ```clojure
-{:clk 1999.8512 :act :m1-blocked :m :m1 :mjpact :bl :line 0}
-{:clk 2000.0861 :act :m2-move-off :m :m2 :ent 1994.8512 :mjpact :ej :j 1597 :line 1}
+{:clk 1999.8512 :act :m1-blocked   :m :m1 :mjpact :bl :line 0}
+{:clk 2000.0861 :act :m2-move-off  :m :m2 :ent 1994.8512 :mjpact :ej :j 1597 :line 1}
 {:clk 2000.0861 :act :m2-start-job :m :m2 :bf :b1 :n 3 :mjpact :sm :j 1598 :line 2}
 {:clk 2000.0861 :act :m1-unblocked :m :m1 :mjpact :ub :line 3}
-{:clk 2000.0861 :act :m1-move-off :m :m1 :bf :b1 :n 2 :mjpact :bj :j 1601 :line 4}
-{:clk 2000.0861 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2001.0861 :mjpact :aj :j 1602 :line 5}
-{:clk 2001.0861 :act :m1-blocked :m :m1 :mjpact :bl :line 6}
-{:clk 2001.1861 :act :m2-move-off :m :m2 :ent 1995.8512 :mjpact :ej :j 1598 :line 7}
+{:clk 2000.0861 :act :m1-move-off  :m :m1 :bf :b1 :n 2 :mjpact :bj :j 1601 :line 4}
+{:clk 2000.0861 :act :m1-start-job :m :m1 :jt :jobType1 :m :m1 :ends 2001.0861 :mjpact :aj :j 1602 :line 5}
+{:clk 2001.0861 :act :m1-blocked   :m :m1 :mjpact :bl :line 6}
+{:clk 2001.1861 :act :m2-move-off  :m :m2 :ent 1995.8512 :mjpact :ej :j 1598 :line 7}
 {:clk 2001.1861 :act :m2-start-job :m :m2 :bf :b1 :n 3 :mjpact :sm :j 1599 :line 8}
 {:clk 2001.1861 :act :m1-unblocked :m :m1 :mjpact :ub :line 9}
-{:clk 2001.1861 :act :m1-move-off :m :m1 :bf :b1 :n 2 :mjpact :bj :j 1602 :line 10}
-{:clk 2001.1861 :act :m1-start-job :jt :jobType1 :m :m1 :ends 2002.1861 :mjpact :aj :j 1603 :line 11}
-{:clk 2002.1861 :act :m1-blocked :m :m1 :mjpact :bl :line 12}
-{:clk 2002.2861 :act :m2-move-off :m :m2 :ent 1996.8512 :mjpact :ej :j 1599 :line 13}
+{:clk 2001.1861 :act :m1-move-off  :m :m1 :bf :b1 :n 2 :mjpact :bj :j 1602 :line 10}
+{:clk 2001.1861 :act :m1-start-job :m :m1 :jt :jobType1 :m :m1 :ends 2002.1861 :mjpact :aj :j 1603 :line 11}
+{:clk 2002.1861 :act :m1-blocked   :m :m1 :mjpact :bl :line 12}
+{:clk 2002.2861 :act :m2-move-off  :m :m2 :ent 1996.8512 :mjpact :ej :j 1599 :line 13}
 ```
 Note that:
 * :n is the occupancy of the buffer before the action (:act).
@@ -237,7 +237,7 @@ goes down or up. For example:
 
 ```clojure
 {:clk 2032.0994 :act :m2-down :m :m2 :mjpact :down :line 98}
-{:clk 2032.3566 :act :m2-up :m :m2 :mjpact :up :line 99}
+{:clk 2032.3566 :act :m2-up   :m :m2 :mjpact :up :line 99}
 ```
 In the example, at 2032.0994 machine :m2 went down; at 2032.3566 it came back up. 
 
