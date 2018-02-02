@@ -1,5 +1,7 @@
 # MJPdes
 
+[![Build Status](https://travis-ci.org/pdenno/MJPdes.svg?branch=master)](https://travis-ci.org/pdenno/MJPdes)
+
 A discrete event simulation engine for mixed-model asynchronous serial production lines
 
 This software supports simulation of mixed-model and multi-job production systems.
