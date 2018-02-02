@@ -1,7 +1,7 @@
 (ns gov.nist.MJPdes.main
-  (:require [gov.nist.MJPdes.core :refer (main-loop map->Model map->Buffer map->ExpoMachine map->JobType)]
-            [clojure.java.io :refer (as-file reader writer) :as io]
-            [clojure.edn :as edn])
+  (:require [clojure.java.io :refer (as-file reader writer) :as io]
+            [clojure.edn :as edn]
+            [gov.nist.MJPdes.core :refer (main-loop map->Model map->Buffer map->ExpoMachine map->JobType)])
   (:gen-class))
 
 (defn -main [& args]

@@ -1,17 +1,15 @@
 (ns gov.nist.MJPdes.core-test
-  "Tests for MJPdes/core.clj"
-  {:author "Peter Denno"}
   (:require [clojure.test :refer :all]
-            [clojure.spec.test.alpha :as stest]
-            [gov.nist.MJPdes.util.log :as log]
-            [gov.nist.MJPdes.core :as core]
-            [gov.nist.MJPdes.util.utils :as util]
-            [incanter.stats :as stats :refer (sample-exp)]
             [clojure.edn :as edn]
-            [clojure.pprint :refer (cl-format pprint)]))
+            [clojure.pprint :refer (cl-format pprint)]
+            [clojure.spec.test.alpha :as stest]
+            [incanter.stats :as stats :refer (sample-exp)]
+            [gov.nist.MJPdes.core :as core]
+            [gov.nist.MJPdes.util.log :as log]
+            [gov.nist.MJPdes.util.utils :as util]))
 
 ;;; POD If you recompile core.clj after evaluating this, it won't happen. 
-;(stest/instrument) ; Instrument everything
+(stest/instrument) ; Instrument everything
 
 (def ^:private diag (atom nil))
 

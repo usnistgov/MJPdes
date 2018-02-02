@@ -2,10 +2,10 @@
   "Multi-job production (mixed-model production) discrete event simulation."
   {:author "Peter Denno"}
   (:require [clojure.spec.alpha :as s]
+            [clojure.edn :as edn]
+            [clojure.pprint :refer (cl-format pprint)]
             [clojure.spec.test.alpha :as stest]
             [incanter.stats :as stats :refer (sample-exp)]
-            [clojure.pprint :refer (cl-format pprint)]
-            [clojure.edn :as edn]
             [gov.nist.MJPdes.util.utils :as util :refer (ppprint ppp)]
             [gov.nist.MJPdes.util.log :as log]))
 
