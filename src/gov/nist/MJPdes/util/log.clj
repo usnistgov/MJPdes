@@ -66,155 +66,6 @@
                                       (every? (fn [msg] (== clk (:clk %)))
                                               (-> % :args :buf)))))
 
-(defn exception?
-  [act]
-  (some #(= act %) [:st :us :bl :ub]))
-
-;;; POD Use of util/next-machine? is a bit overkill because the messages compared
-;;;     are alway contemporaneous. (Thus they are all part of the same initiating
-;;;     local to this part of the line.) Used to be up? and down?
-
-(defn sort-blocked
-  "In BAS, :bl after :bj; In BBS :bl before :sm."
-  [model [msg1 msg2 answer]]
-  (if (not (nil? answer))
-    [msg1 msg2 answer]
-    (let [m1 (:m msg1)
-          m2 (:m msg2) 
-          same? (= m1 m2)
-          act1 (:act msg1)
-          act2 (:act msg2)
-          BBS? (if (= act1 :bl)
-                 (= (-> model :line m1 :discipline) :BBS)
-                 (= (-> model :line m2 :discipline) :BBS))
-          BAS? (not BBS?)]
-      [msg1 msg2 (cond ; BAS, :bl before :bj
-                   (and same? BAS? (= act2 :bj)) true,
-                   (and same? BAS? (= act1 :bj)) false,
-                   ;; BBS :bl before :aj :sm
-                   (and same? BBS? (#{:aj :sm} act2)) true,
-                   (and same? BBS? (#{:aj :sm} act1)) false,
-                   ;; BBS :bj before :bl
-                   (and same? BBS? (= act1 :bj)) true,
-                   (and same? BBS? (= act2 :bj)) false,
-                   ;; :bl before downstream
-                   (and (= act1 :bl)) true,
-                   (and (= act2 :bl)) false,
-                   :else nil)])))
-
-(defn sort-unblocked
-  "return true if msg1 should come before msg2"
-  [model [msg1 msg2 answer]]
-  (if (not (nil? answer))
-    [msg1 msg2 answer]
-    (let [m1 (:m msg1)
-          m2 (:m msg2) ; model below for easier testing.
-          same? (= m1 m2)
-          act1 (:act msg1)
-          act2 (:act msg2)
-          BBS? (if (= act1 :ub)
-                 (= (-> model :line m1 :discipline) :BBS)
-                 (= (-> model :line m2 :discipline) :BBS))
-          BAS? (not BBS?)]
-      [msg1 msg2 (cond ; BBS, same machine unblock before starting
-                   (and BBS? same? (#{:aj :sm} act2)) true,
-                   (and BBS? same? (#{:aj :sm} act1)) false,
-                   ;; BAS & BBS, can't start until unblocked by next machine. POD Why 4?
-                   (and (not same?) (= act1 :sm)) true,
-                   (and (not same?) (= act2 :sm)) false,
-                   ;; downstream ends/starts new job before upstream unblocks.
-                   ;; (The ends part of this for total ordering.)
-                   (and BAS? (not same?) (#{:ej :bj :sm} act2)) true, 
-                   (and BAS? (not same?) (#{:ej :bj :sm} act1)) false,    
-                   ;; :ub before :sm :aj :bj :ej
-                   (and same? (#{:sm :aj :bj :ej} act2)) true,
-                   (and same? (#{:sm :aj :bj :ej} act1)) false,
-                   :else nil)])))
-
-(defn sort-starved
-  "return true if msg1 should come before msg2"
-  [model [msg1 msg2 answer]]
-  (if (not (nil? answer))
-    [msg1 msg2 answer]
-    (let [m1 (:m msg1) 
-          m2 (:m msg2) ; model below for easier testing.
-          same? (= m1 m2)
-          act1 (:act msg1)
-          act2 (:act msg2)]
-      [msg1 msg2 (cond ;; Do upstream before starving.
-                   (and (not same?) (#{:ej :sm :aj} act1)) true,
-                   (and (not same?) (#{:ej :sm :aj} act2)) false,
-                   ;; end job before starving
-                   (and same? (#{:bj :ej} act1)) true,
-                   (and same? (#{:bj :ej} act2)) false,
-                   :else nil)])))
-
-(defn sort-unstarved
-  "return true if msg1 should come before msg2"
-  [model [msg1 msg2 answer]]
-  (if (not (nil? answer))
-    [msg1 msg2 answer]
-    (let [m1 (:m msg1)
-          m2 (:m msg2) ; model below for easier testing.
-          same? (= m1 m2)
-          act1 (:act msg1)
-          act2 (:act msg2)]
-      [msg1 msg2 (cond 
-                   ;; unstarve before starting 
-                   (and same? (= act2 :sm)) true,
-                   (and same? (= act1 :sm)) false,
-                   ;; Do upstream before unstarving.
-                   (and (#{:bj :aj} act1)) true,
-                   (and (#{:bj :aj} act2)) false,
-                   :else nil)])))
-
-(defn sort-ordinary
-  "return true if msg1 should come before msg2"
-  [model [msg1 msg2 answer]]
-  (if (not (nil? answer))
-    [msg1 msg2 answer]
-    (let [m1 (:m msg1)
-          m2 (:m msg2) ; model below for easier testing.
-          up? (util/upstream? model m1 m2)
-          same? (= m1 m2)
-          down? (and (not up?) (not same?))
-          act1 (:act msg1)
-          act2 (:act msg2)]
-      [msg1 msg2 (cond up?   true
-                       down? false
-                       (and (= act1 :ej) (= act2 :sm)) true, 
-                       (and (= act1 :bj) (#{:aj :sm} act2)) true,
-                       :else false)])))
-
-;;; POD It is not obvious that this produces a total ordering!
-;;; Each of the sort-x except sort-ordinary returns [msg1 msg2 (true | false | nil)]
-;;; If another in the line is called and this third element is true or false it
-;;; passes through the argument, otherwise it returns another triple, either answering
-;;; true/false, or passing through with a nil. 
-(defn sort-two-messages
-  "Sort a collection of contemporaneous messages into a good logical order."
-  [model msg1 msg2]
-  (let [msgs [msg1 msg2 nil]
-        res (cond->> msgs
-              (some #(= :bl (:act %)) msgs) (sort-blocked   model)
-              (some #(= :ub (:act %)) msgs) (sort-unblocked model)
-              (some #(= :st (:act %)) msgs) (sort-starved   model)
-              (some #(= :us (:act %)) msgs) (sort-unstarved model)
-              true                          (sort-ordinary  model))]
-    (nth res 2)))
-
-(defn rsort-two-messages
-  "To facilitate testing"
-  [model msg1 msg2]
-  (sort-two-messages model msg2 msg1))
-
-#_(defn sort-messages
-  [model msgs]
-    (sort (partial sort-two-messages model) msgs))
-
-(defn sort-messages
-  [model msgs]
-  msgs)
 
 (declare buf+ buf- end-job block+ block- starve+ starve-)
 (defn add-compute-log! ; CIDER debugger has trouble with this!
@@ -260,7 +111,7 @@
 (defn print-lines
   "pretty-print the lines, updating (-> model :report :line-cnt)."
   [model clean-buf]
-  (let [fmt (str "{:clk" (-> model :params :time-format) " ~18A" "~{ ~A~}}~%")
+  (let [fmt (str "{:clk" (-> model :params :time-format) " :act " "~18A" "~{ ~A~}}~%")
         buf (pretty-buf model clean-buf)
         line-num (ref (-> model :report :line-cnt))]
     (run! (fn [line]
@@ -427,7 +278,6 @@
   "Reorder and translate items in buffer, truncate floats"
   [model clean-buf]
   (->> clean-buf
-       (sort-messages model)
        (map #(prettyfy-msg model %))
        (map  #(shorten-msg-floats model %))
        (map  #(into (sorted-map-by msg-key-compare) %))))

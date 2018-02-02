@@ -580,7 +580,9 @@
     (as-> model ?m
       (assoc ?m :log-buf [])
       (assoc ?m :diag-log-buf [])
-      (update-in ?m [:report] #(if (empty? %) {:log? false :line-cnt 0 :max-lines 0} (assoc % :line-cnt 0)))
+      (update-in ?m [:report] #(if (empty? %)
+                                 {:log? false :line-cnt 0 :max-lines 0}
+                                 (assoc % :line-cnt 0)))
       (assoc ?m :jm2dm jm2dm)
       (assoc ?m :line (into (sorted-map) (map preprocess-equip (:line model))))
       (assoc ?m :machines (filterv #(machine? (-> model :line %)) (:topology model)))
@@ -751,29 +753,29 @@
                        (preprocess-model ?m)
                        (binding [log/*log-steady* (ref (log/steady-form ?m))] ; create a log for computations.
                          (-> ?m
-                         (main-loop-loop job-end time-end)
-                         (postprocess-model n start))))))) ; Returns a result object
+                             (main-loop-loop job-end time-end)
+                             (postprocess-model n start))))))) ; Returns a result object
            (range (or (:number-of-simulations model) 1)))]
       (log/output-sims model sims))))
   
 (defn main-loop-once
   "Run one simulation."
   [model out-stream]
+  (print "#_")
+  (pprint (log/pretty-model model))
   (binding [*out* out-stream
             *print-length* 10]
-    (print "#_")
-    (pprint (log/pretty-model model))
     (let [start (System/currentTimeMillis)
           job-end  (:run-to-job  (:params model))
           time-end (:run-to-time (:params model))]
       (as-> model ?m
-        (reset! diag (preprocess-model ?m))
+        (preprocess-model ?m)
         (binding [log/*log-steady* (ref (log/steady-form ?m))] ; create a log for computations.
           (as-> ?m ?m2
-              (main-loop-loop ?m2 job-end time-end)
-              (postprocess-model ?m2 1 start))) ; Returns a result object
-        (do (print "#_") ?m)
-        (-> ?m (dissoc :jobmix) pprint)))))
+            (main-loop-loop ?m2 job-end time-end)
+            (postprocess-model ?m2 1 start))) ; Returns a result object
+          (do (print "#_") ?m)
+          (-> ?m (dissoc :jobmix) pprint)))))
 
 (defn main-loop
   "Run one or more simulations."
