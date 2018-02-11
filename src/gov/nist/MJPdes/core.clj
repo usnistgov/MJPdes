@@ -573,7 +573,7 @@
           [k ?b]),
         :else [k e]))
 
-(declare new-log-chan)
+(declare preprocess-continuous-model push-data)
 (defn preprocess-model
   "Add detail and check model for correctness. 
    Make line a sorted-map (if only for readability)."
@@ -801,8 +801,7 @@
 
 (defn preprocess-continuous-model
   "Close old channel (if any), create a new one, set reporting, etc.."
-  ([model] (preprocess-continuous-model model -1))
-  ([model start]
+  [model]
    (when-let [chan (:log-chan    model)] (close! chan))
    (when-let [chan (:log-go-loop model)] (close! chan))
    (as-> model ?m
@@ -810,7 +809,7 @@
      (assoc-in ?m [:report :max-lines] ##Inf)
      (assoc ?m :log-chan (chan 30))
      (assoc ?m :print-buf [])
-     (assoc ?m :log-go-loop (push-data ?m (:log-chan ?m) start)))))
+     (assoc ?m :log-go-loop (push-data ?m (:log-chan ?m)))))
 
 (defn one-des-step
   "Update the model for the effects of one cycle of actions."
@@ -828,7 +827,7 @@
 
 (defn push-data ; POD remove start here and above
   "Push data onto the log channel and park waiting for consumer."
-  [model chan start]
+  [model chan]
   (binding [log/*log-steady* (ref (log/steady-form model))] ; create a log for computations.
     (reset! the-des-model model)
     (go-loop []
