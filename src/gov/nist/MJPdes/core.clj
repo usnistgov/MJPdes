@@ -844,16 +844,3 @@
    Atom the-des-model gets updated in the process."
   [n]
   (repeatedly n #(<!! (:log-chan @the-des-model))))
-
-  
-      
-      
-      
-      
-      
-    
-  
-
-  
-
-
