@@ -29,11 +29,11 @@
 
 (defn log
   "Add to the log-buffer. On a clock tick it will be cleaned and written to log."
-  [model log-map]
+  [model msg-map]
   (let [keep? (or (-> model :report :up&down?)
-                  (not (#{:up :down} (:act log-map))))]
+                  (not (#{:up :down} (:act msg-map))))]
     (cond-> model
-      keep? (update :log-buf #(conj % log-map)))))
+      keep? (update :log-buf #(conj % msg-map)))))
 
 (defn clean-log-buf
   "Remove acts that reverse themselves (i.e. :bl/:ub :st/us) in the argument collection.
@@ -114,19 +114,27 @@
   (let [fmt (str "{:clk" (-> model :params :time-format) " :act " "~18A" "~{ ~A~}}~%")
         buf (pretty-buf model clean-buf)
         line-num (ref (-> model :report :line-cnt))]
-    (run! (fn [line]
-            (cl-format *out* fmt
-                       (:clk line)
-                       (:act line)
-                       (-> (dissoc line :clk :act)
-                           (assoc :line @line-num)
-                           vec
-                           flatten))
-            (dosync (alter line-num inc)))
-          buf)
-    (cond-> model 
-      (-> model :report :diag-log-buf?) (update-in [:diag-log-buf] #(into % buf))
-      true (update-in [:report :line-cnt] #(+ % (count buf))))))
+    (when-not (-> model :report :continuous?)
+      (run! (fn [line]
+              (cl-format *out* fmt
+                         (:clk line)
+                         (:act line)
+                         (-> (dissoc line :clk :act)
+                             (assoc :line @line-num)
+                             vec
+                             flatten))
+              (dosync (alter line-num inc)))
+            buf))
+    (cond-> model
+      (-> model :report :continuous?)
+      (update :print-buf
+              (fn [pb] (into pb (map #(assoc %1 :line %2)
+                                     buf
+                                     (range @line-num (+ @line-num (count buf))))))), 
+      (-> model :report :diag-log-buf?)
+      (update :diag-log-buf #(into % buf)),
+      true
+      (update-in [:report :line-cnt] #(+ % (count buf))))))
 
 ;;;{:residence-sum 0.0,
 ;;; :njobs 0,
@@ -214,7 +222,7 @@
   [model clean-buf now]
   (and (-> model :report :log?)
        (not-empty clean-buf)
-       (>  (-> model :report :max-lines) (-> model :report :line-cnt))
+       (> (-> model :report :max-lines) (-> model :report :line-cnt))
        (>= now (-> model :params :warm-up-time))))
 
 (defn shorten-msg-floats
@@ -313,6 +321,3 @@
            (print "#_")
            (pprint (dissoc @sim :jobmix)))
          sims)))
-
-
-

@@ -48,7 +48,7 @@
        (core/main-loop test-model)
        (println "]")))))
 
-;;; Once loaded, reliable machine BAS follows this cycle
+;;; Once warmed-up, a reliable machine BAS follows this cycle:
 ;;; {:clk    5.6000 :act :m1-blocked        :m :m1 :mjpact :bl :line 5}
 ;;; {:clk    6.8000 :act :m2-complete-job   :m :m2 :mjpact :ej :ent 1.6 :j 3 :line 6}
 ;;; {:clk    6.8000 :act :m2-start-job      :m :m2 :mjpact :sm :bf :b1 :n 1 :j 4 :line 7}
@@ -65,7 +65,7 @@
                   log))
       (is (every? #(=* 1.2 (- (-> % last :clk) (-> % first :clk)) 0.000000001) log)))))
 
-;;; Once loaded, reliable machine BBS follows this cycle
+;;; Once warmed-up, a reliable machine BBS follows this cycle:
 ;;; {:clk    4.8000 :act :m2-complete-job   :m :m2 :mjpact :ej :ent 0.8 :j 2 :line 14}
 ;;; {:clk    4.8000 :act :m2-start-job      :m :m2 :mjpact :sm :bf :b1 :n 1 :j 3 :line 15}
 ;;; {:clk    4.8000 :act :m1-unblocked      :m :m1 :mjpact :ub :line 16}
