@@ -4,8 +4,7 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.edn :as edn]
             [clojure.pprint :refer (cl-format pprint)]
-            [clojure.spec.test.alpha :as stest]
-            [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan buffer close! alts! alts!!]]
+            [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan close!]]
             [incanter.stats :as stats :refer (sample-exp)]
             [gov.nist.MJPdes.util.utils :as util :refer (ppprint ppp)]
             [gov.nist.MJPdes.util.log :as log]))
@@ -80,6 +79,7 @@
 (s/def ::type keyword?)
 (s/def ::Job (s/keys :req-un [::type ::id ::enters ::starts ::ends]))
 
+(s/def ::non-neg-int (s/and integer? #(not (neg? %))))
 (s/def ::non-neg (s/and number? #(not (neg? %))))
 (s/def ::pos     (s/and number? pos?))
 (s/def ::posint  (s/and integer? pos?))
@@ -88,8 +88,9 @@
 (s/def ::mu ::pos)
 (s/def ::lambda ::non-neg)
 (s/def ::up&down seq?)
+(s/def ::bas&bbs #{:BAS :BBS})
 (s/def ::status (s/nilable ::Job))
-(s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down]))
+(s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down] :opt-un [::bas&bbs]))
 
 (s/def ::N ::posint)
 (s/def ::Buffer (s/keys :req-un [::N]))
@@ -108,7 +109,7 @@
 (s/def ::portion ::pos)
 (s/def ::JobType (s/keys :req-un [::portion ::w])) 
 
-(s/def ::max-lines (s/or :pos-int ::posint :infinite #(= % ##Inf)))
+(s/def ::max-lines (s/or :non-neg ::non-neg-int :infinite #(= % ##Inf)))
 (s/def ::log boolean?)
 (s/def ::report (s/keys :req-un [::log?] :opt-un [::max-lines]))
 
@@ -573,7 +574,7 @@
           [k ?b]),
         :else [k e]))
 
-(declare preprocess-continuous-model push-data)
+(declare preprocess-continuous-model push-data-channel)
 (defn preprocess-model
   "Add detail and check model for correctness. 
    Make line a sorted-map (if only for readability)."
@@ -606,9 +607,12 @@
                                                 (:w (jt-key jmix)))))) ;collection
                      (:jobmix ?m) (keys (:jobmix ?m))))
       (assoc-in ?m [:params :current-job] 0)
-      (cond-> ?m
-        (-> ?m :report :continuous?) preprocess-continuous-model
-        check?                       spec-check-model))))
+      (cond-> ?m (-> ?m :report :continuous?) preprocess-continuous-model)
+      (if check?
+        (if (contains? ?m :model-atom)
+          (do (spec-check-model (-> ?m :model-atom deref)) ?m)
+          (spec-check-model ?m))
+        ?m))))
 
 (defn calc-basics
   "Produce a results form containing percent time blocked, and job residence time."
@@ -778,12 +782,12 @@
           (as-> ?m ?m2
             (main-loop-loop ?m2 job-end time-end)
             (postprocess-model ?m2 1 start))) ; Returns a result object
-          (do (print "#_") ?m)
-          (-> ?m (dissoc :jobmix) pprint)))))
+        (do (print "#_") ?m)
+        (-> ?m (dissoc :jobmix) pprint)))))
 
 (declare main-loop-continuous)
 (defn main-loop
-  "Run one or more simulations."
+  "Run one or more simulations or, if continuous, return the model ready to run."
   [model & {:keys [out-stream] :or {out-stream *out*}}]
   (let [n (:number-of-simulations model)]
     (if (or (not n) (= n 1))
@@ -797,19 +801,21 @@
 (defn main-loop-continuous
   "Return a model object from which new log data can be pulled indefinitely."
   [model]
-  (preprocess-model model))
+  (preprocess-model model)) ; calls preprocess-continuous-model
 
 (defn preprocess-continuous-model
-  "Close old channel (if any), create a new one, set reporting, etc.."
+  "Create a wrapper map around the model, which is stored in an atom
+   in this new continuous-model."
   [model]
-   (when-let [chan (:log-chan    model)] (close! chan))
-   (when-let [chan (:log-go-loop model)] (close! chan))
-   (as-> model ?m
-     (assoc-in ?m [:report :log?] true)
-     (assoc-in ?m [:report :max-lines] ##Inf)
-     (assoc ?m :log-chan (chan 30))
-     (assoc ?m :print-buf [])
-     (assoc ?m :log-go-loop (push-data ?m (:log-chan ?m)))))
+  (let [model-atom
+        (atom (as-> model ?m
+                  (assoc-in ?m [:report :log?] true)
+                  (assoc-in ?m [:report :max-lines] ##Inf)
+                  (assoc ?m :print-buf [])))
+        channel (chan 30)]
+    {:model-atom  model-atom
+     :log-chan    channel
+     :log-go-loop (push-data-channel model-atom channel)}))
 
 (defn one-des-step
   "Update the model for the effects of one cycle of actions."
@@ -823,23 +829,21 @@
             (reduce #(run-action %1 %2) ?m actions)
             (log/push-log ?m)))))
 
-(def the-des-model (atom nil))
-
-(defn push-data ; POD remove start here and above
+(defn push-data-channel
   "Push data onto the log channel and park waiting for consumer."
-  [model chan]
-  (binding [log/*log-steady* (ref (log/steady-form model))] ; create a log for computations.
-    (reset! the-des-model model)
+  [model-atom chan]
+  (reset! diag {:model-atom model-atom :chan chan})
+  (binding [log/*log-steady* (ref (log/steady-form @model-atom))] ; create a log for computations.
     (go-loop []
-      (let [msg (-> @the-des-model :print-buf first)]
+      (let [msg (-> @model-atom :print-buf first)]
         (when msg (>! chan msg))
         (if msg 
-          (swap! the-des-model (fn [m] (update m :print-buf #(subvec % 1))))
-          (swap! the-des-model #(one-des-step %)))
+          (swap! model-atom (fn [m] (update m :print-buf #(subvec % 1))))
+          (swap! model-atom #(one-des-step %)))
         (recur)))))
 
 (defn pull-data!
   "Return n messages from the DES model. 
    Atom the-des-model gets updated in the process."
-  [n]
-  (repeatedly n #(<!! (:log-chan @the-des-model))))
+  [continuous-model n]
+  (repeatedly n #(<!! (:log-chan continuous-model))))

@@ -112,29 +112,29 @@
   "pretty-print the lines, updating (-> model :report :line-cnt)."
   [model clean-buf]
   (let [fmt (str "{:clk" (-> model :params :time-format) " :act " "~18A" "~{ ~A~}}~%")
-        buf (pretty-buf model clean-buf)
-        line-num (ref (-> model :report :line-cnt))]
-    (when-not (-> model :report :continuous?)
-      (run! (fn [line]
-              (cl-format *out* fmt
-                         (:clk line)
-                         (:act line)
-                         (-> (dissoc line :clk :act)
-                             (assoc :line @line-num)
-                             vec
-                             flatten))
-              (dosync (alter line-num inc)))
-            buf))
-    (cond-> model
-      (-> model :report :continuous?)
-      (update :print-buf
-              (fn [pb] (into pb (map #(assoc %1 :line %2)
-                                     buf
-                                     (range @line-num (+ @line-num (count buf))))))), 
-      (-> model :report :diag-log-buf?)
-      (update :diag-log-buf #(into % buf)),
-      true
-      (update-in [:report :line-cnt] #(+ % (count buf))))))
+        buf (pretty-buf model clean-buf)]
+    (with-local-vars [line-num (-> model :report :line-cnt)]
+      (when-not (-> model :report :continuous?)
+        (run! (fn [line]
+                (cl-format *out* fmt
+                           (:clk line)
+                           (:act line)
+                           (-> (dissoc line :clk :act)
+                               (assoc :line @line-num)
+                               vec
+                               flatten))
+                (var-set line-num (inc @line-num)))
+              buf))
+      (cond-> model
+        (-> model :report :continuous?)
+        (update :print-buf
+                (fn [pb] (into pb (map #(assoc %1 :line %2)
+                                       buf
+                                       (range @line-num (+ @line-num (count buf))))))), 
+        (-> model :report :diag-log-buf?)
+        (update :diag-log-buf #(into % buf)),
+        true
+        (update-in [:report :line-cnt] #(+ % (count buf)))))))
 
 ;;;{:residence-sum 0.0,
 ;;; :njobs 0,
@@ -260,8 +260,8 @@
           (= :up (:act msg)) (read-string (cl-format nil "~A-up"           m)),
           (= :down (:act msg)) (read-string (cl-format nil "~A-down"       m)))))
 
-(defn prettyfy-msg
-  "Interpret/translate the SCADA log. (Give pretty-fied pn names to MJPdes output.)" 
+(defn act&mjpact
+  "Move :act to :mjpact; use a pretty name for :act." 
   [model msg]
   (as-> msg ?msg
     (assoc ?msg :mjpact (:act ?msg))
@@ -283,28 +283,24 @@
       false)))
 
 (defn pretty-buf
-  "Reorder and translate items in buffer, truncate floats"
+  "translate items in buffer, truncate floats"
   [model clean-buf]
   (->> clean-buf
-       (map #(prettyfy-msg model %))
-       (map  #(shorten-msg-floats model %))
-       (map  #(into (sorted-map-by msg-key-compare) %))))
+       (map #(act&mjpact model %))
+       (map #(shorten-msg-floats model %))
+       (map #(into (sorted-map-by msg-key-compare) %))))
 
 (defn pretty-model
-  "Remove a few things from model to make it print cleaner."
+  "Remove a few things from the argument model to make it print cleaner."
   [model]
-  (update-in model [:line]
-             (fn [line]
-               (reduce (fn [l equip-name]
-                         (update-in l [equip-name]
-                                    #(-> %
-                                         (dissoc :name)
-                                         (dissoc :status)
-                                         (dissoc :mchain)
-                                         (dissoc :up&down)
-                                         (dissoc :holding))))
-                       line
-                       (keys line)))))
+  (update model :line
+          (fn [line]
+            (reduce (fn [l equip-name]
+                      (update-in l
+                                 [equip-name]
+                                 #(dissoc % :name :status :mchain :up&down :holding)))
+                    line
+                    (keys line)))))
 
 (defn output-sims
   "Print the simulation results to *out*. If there is just one sim, return it.
