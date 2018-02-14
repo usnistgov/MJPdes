@@ -14,5 +14,5 @@
   :bin {:name "MJPdes"
         :bootclasspath false 
         :jvm-opts ["-server" "-Dfile.encoding=utf-8" "$JVM_OPTS" ]}
-  :aliases {"test-all" ["with-profile" "default:+1.7:+1.8:+1.9" "test"]}
+  :aliases {"test-all" ["with-profile" "default" "test"]}
   :main gov.nist.MJPdes.main)
