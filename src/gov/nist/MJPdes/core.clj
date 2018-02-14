@@ -88,9 +88,9 @@
 (s/def ::mu ::pos)
 (s/def ::lambda ::non-neg)
 (s/def ::up&down seq?)
-(s/def ::bas&bbs #{:BAS :BBS})
+(s/def ::discipline #{:BAS :BBS})
 (s/def ::status (s/nilable ::Job))
-(s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down] :opt-un [::bas&bbs]))
+(s/def ::ExpoMachine (s/keys :req-un [::lambda ::mu ::W ::status ::up&down] :opt-un [::discipline]))
 
 (s/def ::N ::posint)
 (s/def ::Buffer (s/keys :req-un [::N]))
