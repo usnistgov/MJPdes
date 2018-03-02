@@ -38,7 +38,7 @@ This will build an executable in the MJPdes/target directory.
 
 ## Usage
 
-[![Clojars Project](http://clojars.org/pdenno/mjpDES/latest-version.svg)](http://clojars.org/pdenno) <br>
+[![Clojars Project](http://clojars.org/pdenno/MJPdes/latest-version.svg)](http://clojars.org/pdenno) <br>
 [![Build Status](https://travis-ci.org/pdenno/MJPdes.svg?branch=master)](https://travis-ci.org/pdenno/MJPdes)
 
 The program takes a model specification as a file and runs it, printing results at the shell where it was started
