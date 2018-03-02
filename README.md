@@ -1,7 +1,5 @@
 # MJPdes
 
-[![Build Status](https://travis-ci.org/pdenno/MJPdes.svg?branch=master)](https://travis-ci.org/pdenno/MJPdes)
-
 A discrete event simulation engine for mixed-model asynchronous serial production lines
 
 This software supports simulation of mixed-model and multi-job production systems.
@@ -39,6 +37,9 @@ The program can report:
 This will build an executable in the MJPdes/target directory. 
 
 ## Usage
+
+[![Clojars Project](http://clojars.org/pdenno/MJPdes/latest-version.svg)](http://clojars.org/pdenno) <br>
+[![Build Status](https://travis-ci.org/pdenno/MJPdes.svg?branch=master)](https://travis-ci.org/pdenno/MJPdes)
 
 The program takes a model specification as a file and runs it, printing results at the shell where it was started
 or to a file. Depending on the parameters, execution may take a few seconds or a few minutes or more. There is an

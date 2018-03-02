@@ -9,9 +9,10 @@
              :1.9 {:dependencies [[org.clojure/clojure "1.9.0"]]}}
   :plugins [[lein-binplus "0.6.4"]]
   :dependencies [[org.clojure/clojure        "1.9.0"]
+                 [org.clojure/core.async   "0.4.474"]
                  [incanter/incanter-core     "1.5.7"]]
   :bin {:name "MJPdes"
         :bootclasspath false 
         :jvm-opts ["-server" "-Dfile.encoding=utf-8" "$JVM_OPTS" ]}
-  :aliases {"test-all" ["with-profile" "default" #_"default:+1.7:+1.8:+1.9" "test"]}
+  :aliases {"test-all" ["with-profile" "default" "test"]}
   :main gov.nist.MJPdes.main)
